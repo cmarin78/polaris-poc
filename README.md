@@ -1,7 +1,8 @@
 # Polaris — corporate identity fabric on OSS
 
-**Phase 2** of the Helios POC. Replaces an in-house OpenVPN + per-service
-AD-bound identity with a single open-source stack:
+Prueba de concepto que simula el reemplazo de un OpenVPN corporativo +
+identidad atada a Active Directory por servicio, por una sola columna
+vertebral open-source:
 
 - **Headscale** (self-hosted Tailscale control plane) for the network mesh
 - **Keycloak 24** for OIDC issuance
@@ -10,13 +11,12 @@ AD-bound identity with a single open-source stack:
 - **kind** (Kubernetes-in-Docker, EKS sim) for the workload layer
 - **3 portals**: intranet, Grafana, customer — all OIDC against Keycloak
 
-Status: **done**. Six days, end-to-end verified with 6 users, 5 buckets,
-3 tenants.
+Status: **done**. End-to-end verified with 6 users, 5 buckets, 3 tenants.
 
-See **[RUN_REPORT.md](RUN_REPORT.md)** for the full day-by-day build,
-bump-by-bump log, E2E outputs, replication plan, and "what surprised us"
-section. **[`docs/design.md`](docs/design.md)** has the architecture,
-tag matrix, IAM policies, and 9 risks.
+See **[RUN_REPORT.md](RUN_REPORT.md)** for the narrative (escenario
+simulado, setup por etapa, prueba end-to-end con 6 figuras, hallazgos,
+plan de reproducción y riesgos). **[`docs/design.md`](docs/design.md)**
+has the architecture, tag matrix, IAM policies, and 9 risks.
 
 ## TL;DR
 
@@ -50,7 +50,7 @@ Two layers of authorization (both must fail for a leak):
 | Data (DB) | which user → which row | Postgres RLS via `SET LOCAL app.current_tenant_id` |
 | Data (S3) | which user → which bucket/object | MinIO IAM policy mapped from groups claim |
 
-## Quickstart (Day 0 → Day 1)
+## Quickstart (setup inicial)
 
 ```bash
 git clone https://github.com/cmarin78/polaris-poc
@@ -97,23 +97,23 @@ kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml
 Negative case: `alice-acme` requesting `pol-data-ops` → `AccessDenied`.
 Negative case: `alice` (employee) on customer portal → `403 no tenant group`.
 
-## Decisions locked in round 1
+## Decisiones locked in round 1
 
-| # | question | choice | reasoning |
-|---|---|---|---|
-| Q1 | sync Keycloak groups → Headscale tags? | manual `headscale nodes tag` for POC | automation via webhook is straightforward but not in scope |
-| Q2 | schema-per-tenant or shared schema? | shared schema + RLS via `SET LOCAL` | cheaper ops, one migration applies to all |
-| Q3 | customer portal API-first or HTML-only? | HTML-only | API contract is a separate workstream |
-| Q4 | Prometheus? | skipped (Grafana + Postgres datasource only) | metric scope small; Grafana queries are enough |
-| Q5 | LocalStack or MinIO for S3+IAM? | MinIO with OIDC | lighter, OIDC first-class, native STS |
+| pregunta | elección | razonamiento |
+|---|---|---|
+| ¿Sincronizar grupos de Keycloak a tags de Headscale? | manual `headscale nodes tag` para el POC | la automatización vía webhook es directa pero fuera de scope |
+| ¿Schema-per-tenant o esquema compartido en Postgres? | esquema compartido + RLS vía `SET LOCAL` | ops más barato, una migración aplica a todos |
+| ¿Portal customer API-first o solo HTML? | solo HTML | el contrato API es otro workstream |
+| ¿Prometheus? | skipeado (solo Grafana + datasource Postgres) | el alcance de métricas es chico; las queries de Grafana alcanzan |
+| ¿LocalStack o MinIO para S3+IAM? | MinIO con OIDC | más liviano, OIDC first-class, STS nativo |
 
 ## Repo layout
 
 ```
 polaris/
 ├── README.md                   ← this file
-├── RUN_REPORT.md               ← day-by-day build + bumps + E2E outputs
-├── RUN_REPORT.docx              ← same content, .docx for sharing
+├── RUN_REPORT.md               ← escenario + setup + E2E (6 figuras) + hallazgos
+├── RUN_REPORT.docx              ← mismo contenido, .docx para compartir
 ├── docker-compose.yml          ← 4 services + bootstrap
 ├── .env.example                ← credentials template (real .env is gitignored)
 ├── acl/
@@ -149,13 +149,13 @@ polaris/
 └── tests/                       ← E2E scripts (see RUN_REPORT §A)
 ```
 
-## Risks
+## Riesgos
 
-See [RUN_REPORT §6](RUN_REPORT.md#6-risks-known-at-poc-close). Nine risks
-identified; R7 (MinIO community archives discontinued) and R8 (audience
-mapper required per OIDC client) hit during the build and were mitigated.
-R9 (boto3 STS rejects empty RoleArn) required switching to raw HTTP for
-the STS call.
+Ver [RUN_REPORT §9](RUN_REPORT.md#9-riesgos-conocidos-al-cierre-del-poc).
+Nueve riesgos identificados; R7 (archivos community de MinIO discontinuados)
+y R8 (audience mapper requerido por cliente OIDC) aparecieron durante el
+setup y fueron mitigados. R9 (boto3 STS rechaza RoleArn vacío) requirió
+cambiar a HTTP crudo para la llamada STS.
 
 ## What's not in this POC
 

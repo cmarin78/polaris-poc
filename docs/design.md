@@ -508,29 +508,32 @@ polaris/
 
 | # | Pregunta | Decisión | Por qué |
 | --- | --- | --- | --- |
-| Q1 | OIDC vs sync manual para Keycloak→Tailscale tags | **sync manual** vía `headscale nodes tag` | ~30 líneas de Python; tsidp queda como follow-up de fase 4 |
-| Q2 | Schema-per-tenant vs RLS en Postgres | **RLS con `SET LOCAL app.tenant`** | SQL estándar, tests de aislamiento más fáciles; schema-per-tenant agrega complejidad de migraciones |
-| Q3 | Customer portal REST vs HTML | **solo HTML** para el POC | REST + API key per tenant se agrega en fase 4 cuando se valide el flujo de UI |
-| Q4 | Monitoring skeleton | **skip Prometheus**, Grafana con Postgres datasource | no necesitamos alerting para el POC; Grafana ya tiene metadata DB propia |
-| Q5 (nueva) | IAM + S3 sim | **MinIO con OIDC contra Keycloak** | lightweight, OIDC first-class, STS-style creds; LocalStack es overkill para POC |
+| # | Pregunta | Decisión | Por qué |
+| --- | --- | --- | --- |
+| 1 | OIDC vs sync manual para Keycloak→Tailscale tags | **sync manual** vía `headscale nodes tag` | ~30 líneas de Python; tsidp queda como follow-up posterior |
+| 2 | Schema-per-tenant vs RLS en Postgres | **RLS con `SET LOCAL app.tenant`** | SQL estándar, tests de aislamiento más fáciles; schema-per-tenant agrega complejidad de migraciones |
+| 3 | Customer portal REST vs HTML | **solo HTML** para el POC | REST + API key per tenant se agrega más adelante cuando se valide el flujo de UI |
+| 4 | Monitoring skeleton | **skip Prometheus**, Grafana con Postgres datasource | no necesitamos alerting para el POC; Grafana ya tiene metadata DB propia |
+| 5 (nueva) | IAM + S3 sim | **MinIO con OIDC contra Keycloak** | lightweight, OIDC first-class, STS-style creds; LocalStack es overkill para POC |
 
 ## 8. Plan de replicación (cuando aprobemos)
 
-1. **Día 1**: docker-compose base (Keycloak + Postgres + Headscale + MinIO).
-   Levantar, verificar healthchecks, configurar MinIO OIDC contra Keycloak,
-   crear 5 buckets con sus políticas IAM.
-2. **Día 2**: k3d cluster + namespaces + ingress. Verificar que un pod
-   puede resolver `headscale` y registrar un sidecar. Verificar que el
-   pod puede hablarle a MinIO via tailnet (STS test).
-3. **Día 3**: portal intranet. Flask + OIDC + Keycloak + endpoint
+1. **Etapa 1 — Stack base**: docker-compose con Keycloak + Postgres +
+   Headscale + MinIO. Levantar, verificar healthchecks, configurar
+   MinIO OIDC contra Keycloak, crear 5 buckets con sus políticas IAM.
+2. **Etapa 2 — Cluster kind (simulando EKS)**: levantar el cluster,
+   crear namespaces, deployar Traefik. Verificar que un pod puede
+   resolver `headscale` y registrar un sidecar. Verificar que el pod
+   puede hablarle a MinIO via tailnet (STS test).
+3. **Etapa 3 — Portal intranet**: Flask + OIDC + Keycloak + endpoint
    `/files` con proxy STS a MinIO. Walkthrough end-to-end con login SSO.
-4. **Día 4**: portal Grafana. OIDC + role mapping + datasources.
+4. **Etapa 4 — Portal Grafana**: OIDC + role mapping + datasources.
    Walkthrough con `pol-admin` y `pol-employees`.
-5. **Día 5**: customer portal multi-tenant. Aislamiento SQL RLS + ACL
-   + MinIO IAM por tenant. Walkthrough con Acme + Brightside + Northwind.
-6. **Día 6**: docs + screenshots + capturas + walkthrough final.
-   README navegable + RUN_REPORT.md + RUN_REPORT.docx + capturas +
-   screenshots de cada portal.
+5. **Etapa 5 — Portal customer multi-tenant**: aislamiento SQL RLS +
+   ACL + MinIO IAM por tenant. Walkthrough con Acme + Brightside +
+   Northwind.
+6. **Etapa 6 — Documentación**: RUN_REPORT.md + RUN_REPORT.docx con
+   las 6 capturas de cada portal + walkthrough final.
 
 Cada día termina con un walkthrough reproducible desde cero
 (`docker compose down -v && ... up -d --build && ...`) y screenshots.
