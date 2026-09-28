@@ -82,7 +82,7 @@
     {
       "username": "alice-acme",
       "email": "ext.alice@acme.example",
-      "firstName": "Alice (Acme)",
+      "firstName": "Alice Acme",
       "lastName": "External",
       "enabled": true,
       "emailVerified": true,
@@ -94,7 +94,7 @@
     {
       "username": "bob-brightside",
       "email": "ext.bob@brightside.example",
-      "firstName": "Bob (Brightside)",
+      "firstName": "Bob Brightside",
       "lastName": "External",
       "enabled": true,
       "emailVerified": true,
@@ -106,7 +106,7 @@
     {
       "username": "carol-northwind",
       "email": "ext.carol@northwind.example",
-      "firstName": "Carol (Northwind)",
+      "firstName": "Carol Northwind",
       "lastName": "Partner",
       "enabled": true,
       "emailVerified": true,
