@@ -217,12 +217,25 @@ each team would own its tags.
       "dst":    ["tag:pol-intranet:80", "tag:pol-minio:9000"] },
 
     // Admin has access to everything (including the MinIO console :9001)
-    { "action": "accept",
+    {
+      "action": "accept",
       "src":    ["tag:pol-admin"],
       "dst": [
         "tag:pol-intranet:80", "tag:pol-grafana:80",
-        "tag:pol-minio:9000", "tag:pol-minio:9001"
-      ] }
+        "tag:pol-customer-acme:80", "tag:pol-customer-brightside:80",
+        "tag:pol-partners-northwind:80",
+        "tag:pol-minio:9000", "tag:pol-minio:9001",
+        "tag:pol-eng:22"
+      ]
+    },
+    // The service sidecars (intranet, grafana, minio) reach MinIO via the
+    // shared docker network in the POC, but the same rule applies if the
+    // pods move to per-node tailnet routing later.
+    {
+      "action": "accept",
+      "src":    ["tag:pol-intranet", "tag:pol-grafana", "tag:pol-minio"],
+      "dst":    ["tag:pol-minio:9000"]
+    }
   ],
 ```
 
@@ -245,28 +258,23 @@ enforces tenant boundaries.
 
 ```hujson
   "ssh": [
-    // Engineers get SSH to the bastion
-    { "action": "accept",
-      "src":    ["tag:pol-eng"],
-      "dst":    ["tag:pol-eng"] },
-
-    // Ops get SSH to all the data buckets (for S3-over-tailnet ops work)
-    { "action": "accept",
-      "src":    ["tag:pol-ops"],
-      "dst":    ["tag:pol-employees", "tag:pol-ops", "tag:pol-admin"] },
-
-    // Admin gets SSH everywhere
-    { "action": "accept",
-      "src":    ["tag:pol-admin"],
-      "dst":    ["*"] }
+    // Ops can SSH to the bastion for k8s node debug (future); admin can too.
+    {
+      "action": "accept",
+      "src":    ["tag:pol-ops", "tag:pol-admin"],
+      "dst":    ["tag:pol-eng"],
+      "users":  ["root"]
+    }
   ]
 }
 ```
 
 The `ssh` section governs which tagged nodes accept SSH from which
-other tagged nodes. Engineer-tagged users can SSH into the bastion
-(also tagged `tag:pol-eng`); ops-tagged users can SSH into nodes
-tagged for ops/employees/admin; admin-tagged users get SSH everywhere.
+other tagged nodes, and restricts the SSH login to a specific user
+list (`users: ["root"]`). The POC exposes only one SSH rule:
+ops- and admin-tagged clients can SSH as root into the bastion
+(target tagged `tag:pol-eng`). Engineer-tagged clients cannot SSH
+out in this POC because no rule lists them as a source.
 
 ## 5. Identity & access flow
 
