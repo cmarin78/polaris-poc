@@ -33,16 +33,22 @@ def discover_keycloak(kc_host: str, kc_port: int) -> dict:
     return r.json()
 
 
-def drive_oidc(session, base: str, kc_disco: dict, username: str, password: str) -> None:
+def drive_oidc(session, base: str, kc_disco: dict, username: str, password: str,
+               kc_host: str, kc_port: int) -> None:
+    """Same as test_intranet_files: rewrite `keycloak:8080` -> kc_host:kc_port
+    because the portal returns a redirect to the internal docker hostname,
+    which doesn't resolve from the host where this test runs.
+    """
     r = session.get(f"{base}/login", allow_redirects=False, timeout=10)
     if r.status_code != 302:
         raise RuntimeError(f"/login expected 302, got {r.status_code}")
-    authorize_url = r.headers["Location"]
+    authorize_url = r.headers["Location"].replace("keycloak:8080", f"{kc_host}:{kc_port}")
     r = session.get(authorize_url, allow_redirects=True, timeout=10)
     soup = BeautifulSoup(r.text, "html.parser")
     action = soup.form.get("action") if soup.form else None
     if not action:
         raise RuntimeError("Keycloak login form not found")
+    action = action.replace("keycloak:8080", f"{kc_host}:{kc_port}")
     r = session.post(
         action,
         data={"username": username, "password": password, "login": ""},
@@ -54,8 +60,11 @@ def drive_oidc(session, base: str, kc_disco: dict, username: str, password: str)
 
 
 def extract_tenant(html: str) -> str:
-    """The home page renders 'Welcome <user>. tenant: <name>'."""
-    m = re.search(r"tenant:\s*(\S+)", html)
+    """The home page renders 'Welcome <user>. tenant: <name>' inside a
+    <span class="tag"> ... </span>. Capture up to the next '<' to avoid
+    pulling in the closing tag.
+    """
+    m = re.search(r"tenant:\s*([^<\s]+)", html)
     return m.group(1) if m else "(no tenant)"
 
 
@@ -93,7 +102,8 @@ def main() -> int:
 
     s = requests.Session()
     try:
-        drive_oidc(s, args.customer, kc, args.username, args.password)
+        drive_oidc(s, args.customer, kc, args.username, args.password,
+                    args.kc_host, args.kc_port)
     except Exception as e:
         print(f"  OIDC failed: {e}")
         return 1

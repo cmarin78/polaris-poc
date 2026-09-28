@@ -33,13 +33,25 @@ def discover_keycloak(kc_host: str, kc_port: int) -> dict:
     return r.json()
 
 
-def drive_oidc(session, intranet_base: str, kc_disco: dict, username: str, password: str) -> None:
-    """Drive the intranet OIDC flow end-to-end and leave the cookies in `session`."""
+def drive_oidc(session, intranet_base: str, kc_disco: dict, username: str, password: str,
+               kc_host: str, kc_port: int) -> None:
+    """Drive the intranet OIDC flow end-to-end and leave the cookies in `session`.
+
+    The portal's /login redirects to http://keycloak:8080/... — the
+    `keycloak` hostname only resolves inside the docker-compose
+    network. Since the test runs on the host, we rewrite the
+    redirect target to point at the docker bridge IP (kc_host /
+    kc_port) before following it.
+    """
     # 1. Hit /login -> 302 to Keycloak authorize
     r = session.get(f"{intranet_base}/login", allow_redirects=False, timeout=10)
     if r.status_code != 302:
         raise RuntimeError(f"/login expected 302, got {r.status_code}")
     authorize_url = r.headers["Location"]
+    # Rewrite `keycloak:8080` -> `kc_host:kc_port` for host-side reachability.
+    authorize_url = authorize_url.replace("keycloak:8080", f"{kc_host}:{kc_port}")
+    # Same rewrite applies to the form action we'll get back from Keycloak.
+    kc_reachable = f"{kc_host}:{kc_port}"
 
     # 2. Submit credentials at Keycloak
     r = session.get(authorize_url, allow_redirects=True, timeout=10)
@@ -47,7 +59,8 @@ def drive_oidc(session, intranet_base: str, kc_disco: dict, username: str, passw
     action = soup.form.get("action") if soup.form else None
     if not action:
         raise RuntimeError("Keycloak login form not found")
-    # The action URL points to the Keycloak login-actions endpoint.
+    # Keycloak posts to its own /login-actions/authenticate — same host rewrite.
+    action = action.replace("keycloak:8080", kc_reachable)
     r = session.post(
         action,
         data={"username": username, "password": password, "login": ""},
@@ -95,7 +108,8 @@ def main() -> int:
 
     s = requests.Session()
     try:
-        drive_oidc(s, args.intranet, kc, args.username, args.password)
+        drive_oidc(s, args.intranet, kc, args.username, args.password,
+                   args.kc_host, args.kc_port)
     except Exception as e:
         print(f"  OIDC failed: {e}")
         return 1
