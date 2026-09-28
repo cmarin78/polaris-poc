@@ -1,8 +1,8 @@
 # Polaris — corporate identity fabric on OSS
 
-Prueba de concepto que simula el reemplazo de un OpenVPN corporativo +
-identidad atada a Active Directory por servicio, por una sola columna
-vertebral open-source:
+A proof of concept that simulates replacing an in-house OpenVPN +
+per-service Active Directory identity setup with a single open-source
+stack:
 
 - **Headscale** (self-hosted Tailscale control plane) for the network mesh
 - **Keycloak 24** for OIDC issuance
@@ -13,23 +13,28 @@ vertebral open-source:
 
 Status: **done**. End-to-end verified with 6 users, 5 buckets, 3 tenants.
 
-See **[RUN_REPORT.md](RUN_REPORT.md)** for the narrative (escenario
-simulado, setup por etapa, prueba end-to-end con 6 figuras, hallazgos,
-plan de reproducción y riesgos). **[`docs/design.md`](docs/design.md)**
-has the architecture, tag matrix, IAM policies, and 9 risks.
+See **[RUN_REPORT.md](RUN_REPORT.md)** for the narrative (flat task
+list, end-to-end test with six figures, findings, and risks). See
+**[`docs/TOPOLOGY.md`](docs/TOPOLOGY.md)** for the topology and
+architecture diagrams, the tailnet explanation, the Headscale policy
+walked through line by line, and the access matrix. See
+**[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md)** for the
+step-by-step commands and expected outputs that bring the POC up from
+a clean host. **[`docs/design.md`](docs/design.md)** has the
+architecture source of truth.
 
 ## TL;DR
 
-| piece | implementation | why |
-|---|---|---|
-| IDP | Keycloak 24 | OIDC standard, OSS, no vendor lock |
-| EKS sim | kind (k3s in Docker) | reuses real k8s manifests + Helm charts |
-| RDS sim | Postgres 16, multi-DB, RLS | one RLS policy per tenant, ops-cheap |
-| S3 + IAM sim | MinIO with OIDC against Keycloak | lightweight, OIDC first-class, native STS |
-| Network mesh | Headscale 0.29.4 | full ownership of the control plane |
-| Portal intranet | Flask + OIDC + STS proxy to MinIO | end-to-end SSO + IAM |
-| Portal Grafana | Grafana 11.3 + generic OIDC + JMESPath role mapping | pol-admin → Admin, pol-ops → Editor |
-| Portal customer | Flask multi-tenant, tenant via Keycloak groups | SQL RLS + bucket IAM, two-layer defense |
+| Piece             | Implementation                                          | Why                                                                          |
+| ----------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| IDP               | Keycloak 24                                             | OIDC standard, OSS, no vendor lock                                            |
+| EKS sim           | kind (k8s in Docker)                                    | reuses real k8s manifests + Helm charts                                       |
+| RDS sim           | Postgres 16, multi-DB, RLS                              | one RLS policy per tenant, ops-cheap                                          |
+| S3 + IAM sim      | MinIO with OIDC against Keycloak                        | lightweight, OIDC first-class, native STS                                     |
+| Network mesh      | Headscale 0.29.4                                        | full ownership of the control plane                                           |
+| Portal intranet   | Flask + OIDC + STS proxy to MinIO                       | end-to-end SSO + IAM                                                         |
+| Portal Grafana    | Grafana 11.3 + generic OIDC + JMESPath role mapping     | pol-admin → Admin, pol-ops → Editor                                          |
+| Portal customer   | Flask multi-tenant, tenant via Keycloak groups          | SQL RLS + bucket IAM, two-layer defense                                      |
 
 ## Architecture (one line)
 
@@ -41,16 +46,16 @@ traefik :8080 → kind cluster (5 namespaces)
                 → MinIO for object storage
 ```
 
-Two layers of authorization (both must fail for a leak):
+Four layers of authorization (all must fail for a leak):
 
-| layer | what it controls | mechanism |
-|---|---|---|
-| Network | which user → which pod | Headscale ACL v2, tag-based |
-| Identity | which user → which app/portal | Keycloak groups claim |
-| Data (DB) | which user → which row | Postgres RLS via `SET LOCAL app.current_tenant_id` |
-| Data (S3) | which user → which bucket/object | MinIO IAM policy mapped from groups claim |
+| Layer        | What it controls                                | Mechanism                                                            |
+| ------------ | ----------------------------------------------- | -------------------------------------------------------------------- |
+| Network      | which user → which pod                          | Headscale ACL v2, tag-based                                          |
+| Identity     | which user → which app/portal                   | Keycloak `groups` claim                                              |
+| Data (DB)    | which user → which row                          | Postgres RLS via `SET LOCAL app.current_tenant_id`                   |
+| Data (S3)    | which user → which bucket/object                | MinIO IAM policy mapped from the `groups` claim                      |
 
-## Quickstart (setup inicial)
+## Quickstart
 
 ```bash
 git clone https://github.com/cmarin78/polaris-poc
@@ -67,10 +72,10 @@ docker network connect polaris_polaris_default polaris-eks-sim-worker
 
 # 3. Build + load portal images
 docker build -t polaris-intranet:latest apps/intranet/
-docker build -t polaris-grafana:latest apps/grafana/
+docker build -t polaris-grafana:latest  apps/grafana/
 docker build -t polaris-customer:latest apps/customer/
 kind load docker-image polaris-intranet:latest --name polaris-eks-sim
-kind load docker-image polaris-grafana:latest --name polaris-eks-sim
+kind load docker-image polaris-grafana:latest  --name polaris-eks-sim
 kind load docker-image polaris-customer:latest --name polaris-eks-sim
 
 # 4. Apply manifests
@@ -83,37 +88,42 @@ kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml
 # See acl/policy.hujson; apply via `headscale policy set --file ...`
 ```
 
+Each task is described in detail in
+[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
+
 ## Verified end-to-end
 
-| user | group | /data (Postgres) | /files (MinIO) | Grafana role |
-|---|---|---|---|---|
-| alice | pol-employees + pol-eng | 403 (no tenant) | 403 | Viewer |
-| bob | pol-employees + pol-ops | 403 | 403 | Editor |
-| carol | pol-admin + pol-employees | 403 | 403 | Admin |
-| alice-acme | pol-customer-tenant-acme | 2 ACME rows | pol-data-acme | Viewer |
-| bob-brightside | pol-customer-tenant-brightside | 2 BRIGHT rows | pol-data-brightside | Viewer |
-| carol-northwind | pol-partners-northwind | 1 partner row | pol-data-partners | Viewer |
+| user             | groups                              | /data (Postgres)               | /files (MinIO)               | Grafana role |
+| ---------------- | ----------------------------------- | ------------------------------ | ---------------------------- | ------------ |
+| alice            | pol-employees, pol-eng              | 403 (no tenant)                | 403 (no bucket policy)       | Viewer       |
+| bob              | pol-employees, pol-ops              | 403                            | 403                          | Editor       |
+| carol            | pol-admin, pol-employees            | 403                            | 403                          | Admin        |
+| alice-acme       | pol-customer-tenant-acme            | 2 ACME rows                    | pol-data-acme                | Viewer       |
+| bob-brightside   | pol-customer-tenant-brightside      | 2 BRIGHT rows                  | pol-data-brightside          | Viewer       |
+| carol-northwind  | pol-partners-northwind              | 1 partner row                  | pol-data-partners            | Viewer       |
 
-Negative case: `alice-acme` requesting `pol-data-ops` → `AccessDenied`.
-Negative case: `alice` (employee) on customer portal → `403 no tenant group`.
+Negative cases:
 
-## Decisiones locked in round 1
+- `alice-acme` requesting `pol-data-ops` → `AccessDenied`.
+- `alice` (employee) on customer portal → `403 no tenant group`.
 
-| pregunta | elección | razonamiento |
-|---|---|---|
-| ¿Sincronizar grupos de Keycloak a tags de Headscale? | manual `headscale nodes tag` para el POC | la automatización vía webhook es directa pero fuera de scope |
-| ¿Schema-per-tenant o esquema compartido en Postgres? | esquema compartido + RLS vía `SET LOCAL` | ops más barato, una migración aplica a todos |
-| ¿Portal customer API-first o solo HTML? | solo HTML | el contrato API es otro workstream |
-| ¿Prometheus? | skipeado (solo Grafana + datasource Postgres) | el alcance de métricas es chico; las queries de Grafana alcanzan |
-| ¿LocalStack o MinIO para S3+IAM? | MinIO con OIDC | más liviano, OIDC first-class, STS nativo |
+## Decisions
+
+| Question                                                    | Choice                                                | Reasoning                                                      |
+| ----------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
+| Sync Keycloak groups to Headscale tags?                     | manual `headscale nodes tag` for POC                  | webhook automation is straightforward but out of scope         |
+| Schema-per-tenant or shared schema in Postgres?             | shared schema + RLS via `SET LOCAL`                   | cheaper ops, one migration applies to all                      |
+| Customer portal API-first or HTML-only?                     | HTML-only                                             | API contract is a separate workstream                          |
+| Prometheus?                                                 | skipped (Grafana + Postgres datasource only)          | metric scope is small; Grafana queries are enough              |
+| LocalStack or MinIO for S3+IAM?                             | MinIO with OIDC                                       | lighter, OIDC first-class, native STS                          |
 
 ## Repo layout
 
 ```
 polaris/
 ├── README.md                   ← this file
-├── RUN_REPORT.md               ← escenario + setup + E2E (6 figuras) + hallazgos
-├── RUN_REPORT.docx              ← mismo contenido, .docx para compartir
+├── RUN_REPORT.md               ← task list + E2E test (6 figures) + findings
+├── RUN_REPORT.docx             ← same content, .docx for sharing
 ├── docker-compose.yml          ← 4 services + bootstrap
 ├── .env.example                ← credentials template (real .env is gitignored)
 ├── acl/
@@ -139,7 +149,9 @@ polaris/
 │   ├── grafana/deployment.yaml
 │   └── customer/deployment.yaml
 ├── docs/
-│   ├── design.md               ← 545 lines, source of truth
+│   ├── design.md               ← architecture source of truth
+│   ├── TOPOLOGY.md             ← diagrams + access matrix + policy walkthrough
+│   ├── REPRODUCIBILITY.md      ← step-by-step commands + outputs + explanations
 │   ├── diagrams/{architecture,iam-flow,idp-flow,tag-matrix}.mmd
 │   └── screenshots/             ← 6 PNGs: intranet, Grafana, customer (×4)
 ├── k3d/
@@ -149,18 +161,18 @@ polaris/
 └── tests/                       ← E2E scripts (see RUN_REPORT §A)
 ```
 
-## Riesgos
+## Risks
 
-Ver [RUN_REPORT §9](RUN_REPORT.md#9-riesgos-conocidos-al-cierre-del-poc).
-Nueve riesgos identificados; R7 (archivos community de MinIO discontinuados)
-y R8 (audience mapper requerido por cliente OIDC) aparecieron durante el
-setup y fueron mitigados. R9 (boto3 STS rechaza RoleArn vacío) requirió
-cambiar a HTTP crudo para la llamada STS.
+See [RUN_REPORT §9](RUN_REPORT.md#9-known-risks-at-poc-close). Nine
+risks identified; R7 (MinIO community archives discontinued) and R8
+(audience mapper required per OIDC client) hit during the build and
+were mitigated. R9 (boto3 STS rejects empty RoleArn) required
+switching to raw HTTP for the STS call.
 
-## What's not in this POC
+## Out of scope
 
 - TLS certificates (cert-manager + Let's Encrypt in prod)
-- Service mesh (Linkerd/Istio)
+- Service mesh (Linkerd / Istio)
 - Backup / disaster recovery
 - Secrets management (Vault, External Secrets Operator)
 - CI/CD (ArgoCD / Flux)

@@ -2,478 +2,357 @@
 
 > **Codename**: Polaris (the North Star — a navigation reference for what
 > used to be a constellation of stitched-together identity systems).
-> **Goal**: replace the in-house OpenVPN + per-service AD-bound identity
-> with a single open-source stack (Headscale control plane + Keycloak IDP +
-> MinIO IAM+S3 + Postgres RLS) running on a local EKS-sim, with three
-> portals and a customer multi-tenant data layer.
+> **Goal**: validate replacing an in-house OpenVPN + per-service
+> AD-bound identity with a single open-source stack (Headscale control
+> plane + Keycloak IDP + MinIO IAM+S3 + Postgres RLS) running on a
+> local EKS-sim, with three portals and a customer multi-tenant data
+> layer.
 
 ## 1. TL;DR
 
-| | |
-|---|---|
-| Componentes | Headscale, Keycloak, Postgres, MinIO, kind (EKS-sim), Traefik, 3 portals |
-| Líneas de código (apps) | ~700 (intranet + customer Flask apps, Grafana provisioning) |
-| Archivos de infra | ~25 (docker-compose, charts, realm, init SQL, scripts) |
-| Usuarios OIDC verificados | 6 (3 internos + 3 externos de tenants distintos) |
-| Aislamiento verificado | 6 usuarios × 5 buckets, RLS multi-tenant, denial sin grupo tenant |
-| Repos públicos | `cmarin78/polaris-poc`, `cmarin78/tailscaletest-poc`, `cmarin78/headscaletest-poc` |
+|                                          |                                                                                  |
+| ---------------------------------------- | -------------------------------------------------------------------------------- |
+| Components                               | Headscale, Keycloak, Postgres, MinIO, kind (EKS-sim), Traefik, 3 portals         |
+| Lines of code (apps)                     | ~700 (intranet + customer Flask apps, Grafana provisioning)                      |
+| Infra files                              | ~25 (docker-compose, charts, realm JSON, init SQL, scripts)                      |
+| OIDC users verified                      | 6 (3 internal employees + 3 external customers across 3 tenants)                 |
+| Isolation verified                       | 6 users × 5 buckets; RLS multi-tenant; denial when no tenant group              |
+| Public repos                             | `cmarin78/polaris-poc`, `cmarin78/tailscaletest-poc`, `cmarin78/headscaletest-poc` |
 
-El POC demuestra que se puede construir un tejido de identidad con forma
-de producción sin pagar cuentas de Tailscale / Auth0 / AWS, sobre un único
-host Linux.
+The POC demonstrates that a production-shaped identity fabric can be
+built without paying Tailscale / Auth0 / AWS bills, on a single Linux
+host.
 
-## 2. Escenario simulado
+See **[`docs/TOPOLOGY.md`](docs/TOPOLOGY.md)** for the architecture
+diagram, the tailnet explanation, the Headscale policy walked through
+line by line, and the access matrix. See
+**[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md)** for the
+step-by-step commands, expected outputs, and explanations that bring
+the POC up from a clean host.
 
-El objetivo es validar el reemplazo de tres capas legadas por una sola
-columna vertebral open-source:
+## 2. What this POC simulates
 
-| Capa legada                       | Reemplazo en el POC                                   |
-| --------------------------------- | ---------------------------------------------------- |
-| OpenVPN corporativo               | Headscale (control plane) + tailscale node clients   |
-| Active Directory + SSO por app    | Keycloak como IDP único, OIDC contra todos los servicios |
-| Buckets S3 + IAM por aplicación   | MinIO con OIDC contra el mismo Keycloak, STS por tenant |
-| PostgreSQL con DB-per-tenant      | PostgreSQL con RLS + `SET LOCAL app.current_tenant_id` |
+The POC exercises a single integrated identity fabric against the
+following legacy pattern:
 
-La prueba de concepto levanta las tres capas en una sola máquina Linux,
-las conecta a través de un cluster Kubernetes local (kind simulando EKS),
-y ejercita el flujo end-to-end con seis usuarios reales (tres internos y
-tres externos que representan tres clientes distintos del portal
-multi-tenant).
+| Legacy stack                                                      | Replacement the POC validates                                          |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Site-to-site OpenVPN                                              | WireGuard mesh via Tailscale clients, control plane in Headscale      |
+| Per-app Active Directory SSO with NTLM/Kerberos dance              | One Keycloak realm, OIDC issued once, every portal speaks OIDC        |
+| Per-application S3 + per-app IAM roles, separate AWS accounts      | One MinIO instance, OIDC-direct STS, IAM mapped from Keycloak groups  |
+| DB-per-tenant Postgres (one database per customer)                 | Shared schema + RLS via `SET LOCAL app.current_tenant_id`            |
+| Manual "this employee can see this app" spreadsheets               | Tag-driven ACLs in Headscale + Keycloak `groups` claim driving IAM    |
 
-## 3. Componentes y stack
+The POC runs the whole stack on a single Linux box. It exercises the
+end-to-end flow with six real users (three employees and three
+external customers, one per tenant) and proves that the layering
+holds: a user without the right Keycloak group cannot reach the
+portal, cannot read rows they should not see, and cannot list S3
+objects outside their tenant.
 
-```
-                    +-------------------+        +------------------+
-                    | Keycloak 24 (IDP) |        | Headscale stable |
-                    |  :8081            |        |  :28080          |
-                    |  realm: polaris   |        |  Tailscale ctrl  |
-                    +---------+---------+        +--------+---------+
-                              |                           |
-                              | OIDC + JWKS               | Noise
-                              |                           |
-+-------------------+   +-----v------+   +-------v------------------+
-|  Postgres 16      |   |   MinIO    |   |  kind cluster (EKS sim)  |
-|  :5433            |   |  :9000/9001|   |  1 control-plane + 1 work |
-|  3 DBs + RLS      |   |  5 buckets |   |  5 namespaces             |
-+-------------------+   +------------+   +---+-----+-----+----------+
-                                              |     |     |
-                                +-------------+     |     +----------------+
-                                |                   |                      |
-                          +-----v-----+  +---------v---+  +--------------+ |
-                          | intranet  |  |   grafana   |  |   customer   | |
-                          | (Flask)   |  |  11.3 OSS   |  |  (Flask)     | |
-                          | :13000    |  |  :13001     |  |  :13002      | |
-                          +-----------+  +-------------+  +--------------+ |
-                                                                         |
-                                                    Traefik NodePort 30080
-```
+## 3. Task list (in execution order)
 
-| Componente del POC   | Equivalente en producción real       | Notas                                            |
-| -------------------- | ------------------------------------ | ------------------------------------------------ |
-| Headscale 0.29.4     | Tailscale SaaS o Headscale HA        | mesh WireGuard, sin routing a nivel de aplicación |
-| Keycloak 24          | Auth0, Okta, Cognito                 | OIDC + SAML + federación de usuarios             |
-| Postgres 16 + RLS    | Aurora Postgres                      | RLS como contrato de aislamiento por tenant      |
-| MinIO RELEASE.2024-01 | S3 + IAM (AWS)                      | OIDC nativo + STS, sin lock-in de AWS            |
-| kind (k8s)           | EKS                                  | mismos manifests, mismos charts Helm             |
-| Traefik              | ALB / NGINX Ingress                  | ruteo L7, terminación TLS                        |
+These are the tasks that were performed to bring the POC up. The
+order matters; each task is a prerequisite for the next. The list is
+flat by design — there is no project timeline framing here. See
+`docs/REPRODUCIBILITY.md` for the commands and outputs of each task.
 
-## 4. Setup
+1. **Stand up the base docker-compose stack** (Headscale, Keycloak,
+   Postgres, MinIO). Wait for all four services to be healthy.
+2. **Run the MinIO bootstrap container** — creates the five buckets
+   (`pol-data-employees`, `pol-data-ops`, `pol-data-acme`,
+   `pol-data-brightside`, `pol-data-partners`) and six IAM policies
+   that map each Keycloak `groups` claim to its bucket. Configures
+   MinIO OIDC against Keycloak's `polaris` realm.
+3. **Create the kind cluster** (`polaris-eks-sim`) with one
+   control-plane and one worker. Join both nodes to the
+   `polaris_polaris_default` docker network so pods inside the
+   cluster can resolve `keycloak`, `minio`, `postgres`, `headscale`
+   by hostname.
+4. **Build the three portal images** (`polaris-intranet`,
+   `polaris-grafana`, `polaris-customer`) on the host.
+5. **Load the images into the kind cluster** via
+   `kind load docker-image` so the pods can pull them.
+6. **Apply Traefik ingress** first, then the three portal
+   deployments. Each portal gets a Deployment, a ClusterIP Service,
+   an Ingress (host-based routing), and a NodePort Service for the
+   test browser.
+7. **Apply the Headscale ACL policy** from `acl/policy.hujson` —
+   declares `tagOwners`, the per-tag ACLs, and the SSH rules. Without
+   this step Headscale defaults to permissive.
+8. **Register the nodes and tag them** so the Headscale mesh
+   contains the four pods (intranet, grafana, customer, minio).
+9. **Run the end-to-end verification** — for each of the six users,
+   log in via OIDC, exercise the relevant endpoint, and confirm the
+   expected result (rows visible for tenant users; 403 for employees
+   without a tenant; correct Grafana role for admins).
+10. **Capture the six screenshots** that document the working POC
+    (intranet directory, Grafana home as Admin, customer home/data/
+    files for tenant acme, customer 403 for an employee without a
+    tenant). The capture script is
+    `tests/capture_screenshots.py`.
 
-El setup se compone de cinco etapas técnicas. No son días calendario; son
-los componentes que hubo que poner en pie para que el flujo end-to-end
-funcionara.
+## 4. Setup details (per task)
 
-### 4.1 Stack base (docker-compose)
+### 4.1 Base stack (Task 1)
 
-Headscale + Keycloak + Postgres + MinIO arriba y healthy. Cinco buckets
-creados, seis políticas IAM registradas, siete grupos en Keycloak, cuatro
-clientes OIDC, seis usuarios seed.
+Four services on the host: Headscale (control plane, listens on
+`28080`), Keycloak (IDP, `8081`), Postgres (RDBMS, `5433`), MinIO
+(S3+IAM, `9000` for the S3 API and `9001` for the console).
 
-**Archivos clave**:
+The Keycloak realm (`polaris`) is exported from `keycloak/realm-polaris.json`
+with seven groups, six users, and four OIDC clients (`pol-intranet`,
+`pol-grafana`, `pol-customer`, `pol-minio`). The MinIO bootstrap
+container (`scripts/minio_bootstrap.py`) is a `python:3.12-slim` image
+that uses `boto3` for bucket creation and raw HTTP (sigv4-signed
+`PUT /minio/admin/v3/add-canned-policy?name=<name>`) for IAM policy
+upload — there is no `mc` CLI image and the AWS IAM `PutUserPolicy`
+endpoint is not supported by MinIO.
 
-- `docker-compose.yml` — 4 servicios + un contenedor de bootstrap
-- `headscale/config.yaml` — DNS `polaris.ts.net`, nodo efímero timeout 30m
-- `keycloak/realm-polaris.json` — 7 grupos, 6 usuarios, 4 clientes OIDC
-- `postgres/init.sql` — 3 DBs, `pol_customer.customer_data` con policy RLS `tenant_isolation`
-- `scripts/minio_bootstrap.py` — setup de buckets + IAM con boto3
-- `acl/policy.hujson` — tagOwners + ACLs de Headscale
+### 4.2 Cluster and portals (Tasks 3–6)
 
-**Bumps**:
+`kind` cluster with 5 namespaces (`pol-intranet`, `pol-grafana`,
+`pol-customer`, `pol-storage`, `pol-system`). Traefik ingress
+controller runs as a DaemonSet with a NodePort Service for host
+access. Pivoted from `k3d` because `ghcr.io/k3d-io/k3d-tools` is
+blocked on this host, and from `kind extraPortMappings` to Traefik
+NodePort because kind refused to start with the host-port mappings.
 
-- `ghcr.io` está bloqueado en este host, así que pineamos a imágenes
-  cacheadas: `quay.io/keycloak/keycloak:24.0` y
-  `headscale/headscale:stable` (`v0.29.4`).
-- `dl.min.io` devuelve 410 Gone (los archivos open-source de MinIO se
-  discontinuaron en 2026). Cacheamos
-  `quay.io/minio/minio:RELEASE.2024-01-18T22-51-28Z`.
-- Keycloak 24 rechaza `permanentLockoutThreshold` / `failureFactor` /
-  `waitIncrementSeconds` en el realm JSON — esas claves fueron removidas.
-- Keycloak 24 rechaza `firstName: "Bob (eng)"` — los paréntesis se
-  quitan en el import, rompiendo la dupla firstName/lastName. Los
-  sacamos del realm.
+The portal pods each have a tailscale sidecar in the POC design but
+in this run the portals reach MinIO and Postgres via the docker
+hostnames (because the kind nodes joined the docker-compose
+network); the tailnet is the production path and is documented in
+`docs/TOPOLOGY.md` §3.
 
-### 4.2 Cluster kind (simulando EKS)
+### 4.3 Headscale policy (Task 7)
 
-`kind` con 1 control-plane + 1 worker. Cinco namespaces
-(`pol-intranet`, `pol-grafana`, `pol-customer`, `pol-storage`,
-`pol-system`). Traefik como ingress controller (NodePort 30080/30443).
+The policy file (`acl/policy.hujson`) declares ten `tagOwners` and
+the matching `acls` + `ssh` rules. The full file is reproduced and
+walked through in [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md) §4. Two
+Headscale-specific quirks are documented in the policy comments:
+the `user:polaris@` literal (the trailing `@` is the validation
+token) and the absence of `autogroup:admin` /
+`autogroup:nonroot` (Headscale does not implement those).
 
-**Pivote**: arrancamos con `k3d` siguiendo el diseño, pero
-`ghcr.io/k3d-io/k3d-tools` está bloqueado. `kind` ya estaba cacheado
-como `kindest/node:v1.30.0`. El cambio llevó ~10 minutos.
+### 4.4 Verification matrix (Task 9)
 
-**Segundo pivote**: el `extraPortMappings` de kind (para exponer pods en
-el host) colisionaba con reservas fantasma del allocator de puertos de
-docker — kind se rehusaba a arrancar. Pivotamos a Traefik NodePort +
-`kubectl port-forward` para los tests. Los mismos manifests funcionan
-en EKS con `Service.type=LoadBalancer`.
+| user             | groups                              | /data (Postgres)               | /files (MinIO)               | Grafana role |
+| ---------------- | ----------------------------------- | ------------------------------ | ---------------------------- | ------------ |
+| alice            | pol-employees, pol-eng              | 403 (no tenant)                | 403 (no bucket policy)       | Viewer       |
+| bob              | pol-employees, pol-ops              | 403                            | 403                          | Editor       |
+| carol            | pol-admin, pol-employees            | 403                            | 403                          | Admin        |
+| alice-acme       | pol-customer-tenant-acme            | 2 ACME rows                    | pol-data-acme                | Viewer       |
+| bob-brightside   | pol-customer-tenant-brightside      | 2 BRIGHT rows                  | pol-data-brightside          | Viewer       |
+| carol-northwind  | pol-partners-northwind              | 1 partner row                  | pol-data-partners            | Viewer       |
 
-**Conectividad verificada**: los pods dentro de kind alcanzan a
-headscale, keycloak, minio y postgres por sus hostnames de
-docker-compose (los nodos de kind están joined a la red
-`polaris_polaris_default`).
+Negative cases:
 
-### 4.3 Portal intranet
+- `alice-acme` requesting `pol-data-ops` → STS 200 + IAM AccessDenied.
+- `alice` (employee) on customer `/data` → 403 "no tenant group".
+- `bob` (no `pol-customer-tenant-*` group) on customer `/files` → 403.
 
-`polaris-intranet:latest` (python:3.12-slim + Flask + boto3 +
-psycopg2) desplegado en `pol-intranet`. Endpoints `/healthz`,
-`/directory`, `/files`. `/files` proxea el STS `AssumeRoleWithWebIdentity`
-contra MinIO con el access_token de Keycloak del usuario.
+## 5. End-to-end test (with figures)
 
-**Seis usuarios verificados end-to-end**:
+The validation runs through `tests/capture_screenshots.py` (Playwright
+headless + chromium with `--host-rules=MAP keycloak 192.168.32.4` so
+the browser can reach the Keycloak container over the docker bridge
+from the test host). The cookie jar is cleared between portal
+captures so the realm-level Keycloak SSO session from one user's
+intranet login does not auto-bridge them into another pod when we
+later log in as a different user.
 
-| usuario       | grupo                          | bucket              | resultado |
-| ------------- | ------------------------------ | ------------------- | --------- |
-| alice         | pol-employees + pol-eng        | pol-data-employees  | OK        |
-| bob           | pol-employees + pol-ops        | pol-data-ops        | OK        |
-| carol         | pol-admin + pol-employees      | pol-data-employees  | OK (admin) |
-| alice-acme    | pol-customer-tenant-acme       | pol-data-acme       | OK        |
-| bob-brightside | pol-customer-tenant-brightside | pol-data-brightside | OK        |
-| carol-northwind | pol-partners-northwind       | pol-data-partners   | OK        |
+Each figure below is one screenshot from `docs/screenshots/`, with
+an explanation of what it proves.
 
-Test negativo: `alice-acme` pidiendo `pol-data-ops` → `AccessDenied`.
-
-**Bumps que costaron tiempo real**:
-
-1. MinIO `PutUserPolicy` (API IAM de AWS) devuelve *"Unsupported action
-   PutUserPolicy"* — MinIO implementa IAM por su propia admin API, no
-   por el endpoint PutUserPolicy de AWS. Fix: HTTP PUT crudo contra
-   `/minio/admin/v3/add-canned-policy?name=<nombre>` firmado con sigv4
-   (`service=s3`).
-2. MinIO rechaza la firma sigv4 con *"incorrect service"* si firmás con
-   `service=admin`. El service correcto es `s3`.
-3. El query param es `?name=`, NO `?policyName=` (la doc usa
-   `policyName` porque así lo lee `mc admin policy`; el protocolo wire
-   es `name`).
-4. Con `MINIO_IDENTITY_OPENID_ROLE_POLICY` seteado, MinIO requiere un
-   RoleArn estilo ARN, no un `policyName`. El formato es
-   `arn:minio:iam:<region>::role/<base64url(sha1(clientID))>` — ojo con
-   el separador `::` entre region y account-id, y el account-id vacío.
-5. MinIO con `CLAIM_NAME=groups` y `ROLE_POLICY` configurados a la vez
-   falla con *"Role Policy and Claim Name cannot both be set"*.
-   Sacamos `ROLE_POLICY` para usar el camino basado en claims
-   (`DummyRoleARN`).
-6. Con `CLAIM_NAME=groups`, el access_token necesita `aud=<client_id>`
-   seteado explícitamente, si no MinIO rechaza con *"STS JWT Token has
-   `aud` claim invalid"*. Agregamos un `oidc-audience-mapper` a cada
-   cliente OIDC.
-7. `boto3.client("sts")` rechaza `RoleArn` vacío (largo mínimo 20),
-   pero el camino claim-based de MinIO requiere no pasar RoleArn.
-   Cambiamos el `/files` del Flask a HTTP crudo para la llamada STS.
-
-### 4.4 Portal Grafana
-
-`polaris-grafana:latest` (basado en `tailscale-grafana`). Generic OAuth
-contra Keycloak, role mapping vía JMESPath:
-
-```
-contains(groups[*], 'pol-admin') && 'Admin' || contains(groups[*], 'pol-ops') && 'Editor' || 'Viewer'
-```
-
-Datasource Postgres `polaris-postgres` provisionada automáticamente,
-apuntando a la DB `pol_grafana`. Seed de 720 filas de `polaris_metrics`
-servicio × región × minuto para una demo time-series.
-
-**Los 6 usuarios mapeados correctamente** (verificado decodificando
-`id_token.groups`):
-
-| usuario         | rol Grafana esperado |
-| --------------- | ------------------- |
-| alice (pol-employees, pol-eng) | Viewer |
-| bob (pol-employees, pol-ops)   | Editor |
-| carol (pol-admin, pol-employees) | Admin |
-| alice-acme      | Viewer |
-| bob-brightside  | Viewer |
-| carol-northwind | Viewer |
-
-**Bump**: Keycloak rechazó `scope=openid profile email groups` porque
-el scope `groups` no estaba en los scopes permitidos de pol-grafana.
-Sacamos `groups` del request de scope (lo agrega implícitamente el
-realm via default-default-client-scopes), y también `profile`
-(quedó `openid email`).
-
-### 4.5 Portal customer (SQL RLS)
-
-`polaris-customer:latest` (Flask) desplegado en `pol-customer`. Mapeo de
-tenant vía grupos de Keycloak → tenant_id → `SET LOCAL
-app.current_tenant_id` → RLS de Postgres. Defensa en dos capas: el
-tenant data está aislado por RLS a nivel DB Y por políticas IAM
-per-tenant de MinIO a nivel bucket.
-
-**Aislamiento verificado** (lecturas cross-tenant bloqueadas):
-
-| usuario          | grupo                          | /data (RLS)            | /files (S3)            |
-| ---------------- | ------------------------------ | ---------------------- | ---------------------- |
-| alice-acme       | pol-customer-tenant-acme       | 2 filas ACME           | pol-data-acme          |
-| bob-brightside   | pol-customer-tenant-brightside | 2 filas BRIGHT         | pol-data-brightside    |
-| carol-northwind  | pol-partners-northwind         | 1 fila partner         | pol-data-partners      |
-| alice            | pol-employees + pol-eng        | 403 (sin grupo tenant) | 403                    |
-
-**Tres bugs reales que aparecieron en este tramo y cómo se arreglaron**:
-
-1. `SET LOCAL` requiere una transacción abierta. La primera versión de
-   `_set_tenant` ejecutaba cada statement en su propio autocommit —
-   entonces el `SET LOCAL` se descartaba. Se arregló con `with conn:`
-   (abre un tx explícito) y mergeando `_set_tenant` + el SELECT en una
-   sola cadena de `cur.execute`.
-2. `polaris_admin` lo crea como SUPERUSER la imagen oficial de
-   postgres. Los roles SUPERUSER tienen `BYPASSRLS` automático — así
-   que la RLS se saltaba en silencio. Creamos un rol dedicado
-   `polaris_app` con `NOSUPERUSER NOBYPASSRLS`, le dimos solo
-   `SELECT/INSERT/UPDATE/DELETE`, y apuntamos el portal customer ahí.
-3. El portal customer arrancaba usando `pol-customer` como cliente OIDC.
-   Pero MinIO está configurado para esperar `aud=pol-intranet`. Audience
-   mismatch → STS 400. Cambiamos el portal customer para usar también
-   `pol-intranet` como cliente OIDC (los grupos de Keycloak manejan el
-   mapeo de tenant, no el client_id). Actualizamos los `redirectUris`
-   de pol-intranet en consecuencia.
-
-## 5. Prueba end-to-end
-
-La validación se ejecuta con `tests/capture_screenshots.py` (Playwright
-headless + chromium con `--host-rules=MAP keycloak 192.168.32.4` para
-que el browser alcance el contenedor de Keycloak por la docker bridge).
-La cookie jar se limpia entre portales (`ctx.clear_cookies()`) para que
-la sesión SSO a nivel realm de Keycloak no bridgee usuarios entre
-portales.
-
-Cada captura valida una arista del flujo.
-
-### 5.1 Intranet — directorio de empleados como `alice`
+### 5.1 Intranet — directory as `alice`
 
 ![Employee directory rendered for alice](docs/screenshots/01-intranet-directory-alice.png)
 
-**Figura 1 — `alice` ve el directorio de la intranet.** Esta vista prueba
-que el OIDC code+PKCE flow contra Keycloak funciona y que el endpoint
-`/directory` consulta la DB `pol_intranet` con el rol `polaris_admin`
-(dueño de la tabla, sin RLS). Alice es una empleada interna del grupo
-`pol-eng`; la página muestra las cinco personas seed (Ada, Linus, Grace,
-Barbara, Sara) con su departamento, ubicación y rol — todos visibles
-porque este endpoint es de recursos humanos internos y no aplica RLS.
+**Figure 1 — `alice` views the employee directory.** This proves the
+OIDC code+PKCE flow against Keycloak works end-to-end and that the
+`/directory` endpoint queries the `pol_intranet` database with the
+`polaris_admin` role (the owner, no RLS). Alice is an internal
+employee in the `pol-eng` group; the page shows the five seeded
+people (Ada, Linus, Grace, Barbara, Sara) with their department,
+location, and role. This endpoint is an internal HR resource, so it
+has no tenant group requirement — any employee-tagged user can read
+it.
 
-### 5.2 Grafana — home post-OAuth como `carol` (rol Admin)
+### 5.2 Grafana — post-OAuth home as `carol` (Admin role)
 
 ![Grafana home for carol](docs/screenshots/02-grafana-home-carol-admin.png)
 
-**Figura 2 — `carol` autenticada vía OIDC en Grafana.** El avatar en la
-esquina superior derecha confirma que el flujo OAuth genérico de Grafana
-completó el code exchange contra Keycloak y que la sesión de Grafana
-quedó asociada a `carol`. La home muestra "Home" en la sidebar (sin
-dashboards propios todavía) pero el rol Admin está aplicado vía el
-JMESPath de `GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH` —
-`contains(groups[*], 'pol-admin') && 'Admin'`. Un `Viewer` o `Editor`
-vería la misma home pero con menos permisos en `/admin`.
+**Figure 2 — `carol` authenticated via OIDC in Grafana.** The avatar
+in the top right confirms the Grafana generic-OAuth flow completed
+the code exchange against Keycloak and that the Grafana session is
+now bound to `carol`. The home shows "Home" in the sidebar (no
+dashboards yet) but the Admin role is applied via the JMESPath in
+`GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH` —
+`contains(groups[*], 'pol-admin') && 'Admin'`. A `Viewer` or `Editor`
+would see the same home but with fewer permissions at `/admin`.
 
-### 5.3 Customer portal — home como `alice-acme`
+### 5.3 Customer portal — home as `alice-acme`
 
 ![Customer portal home as alice-acme](docs/screenshots/03-customer-home-alice-acme.png)
 
-**Figura 3 — `alice-acme` ve el portal customer con su tenant.** La
-bienvenida muestra explícitamente "Welcome alice-acme. tenant: acme",
-lo que prueba que el mapeo grupo→tenant funcionó: el grupo
-`pol-customer-tenant-acme` se traduce al tenant `acme` vía la tabla
-interna del portal, y ese nombre se usa para resolver el `tenant_id`
-que después alimenta el `SET LOCAL app.current_tenant_id` en cada
-request. Las dos cards ("/data" y "/files") apuntan a los endpoints
-donde se ejercitan las dos capas de defensa (RLS en Postgres y IAM en
-MinIO).
+**Figure 3 — `alice-acme` views the customer portal with her tenant.**
+The welcome line shows explicitly "Welcome alice-acme. tenant:
+acme", which proves the group→tenant mapping worked: the
+`pol-customer-tenant-acme` group was translated to tenant name
+`acme` via the portal's internal table, and that name was used to
+resolve the `tenant_id` that then feeds the `SET LOCAL
+app.current_tenant_id` on every request. The two cards ("/data"
+and "/files") point at the endpoints where the two layers of defense
+(RLS in Postgres and IAM in MinIO) are exercised.
 
-### 5.4 Customer portal — `/data` filtrado por RLS
+### 5.4 Customer portal — `/data` filtered by RLS
 
 ![alice-acme sees only acme rows](docs/screenshots/04-customer-data-alice-acme-acme-only.png)
 
-**Figura 4 — `/data` muestra solo las filas del tenant acme.** Esta es
-la prueba más importante de aislamiento a nivel SQL. La tabla
-`customer_data` contiene filas para tres tenants (acme, brightside,
-partners); la policy `tenant_isolation` rechaza toda lectura donde
-`tenant_id != current_setting('app.current_tenant_id')`. La página
-muestra dos filas (contract-id `ACME-2026-001` y monthly-revenue
-`$4.2M`) y expone abajo el SQL emitido — incluyendo el
-`SET LOCAL app.current_tenant_id = '1'`. Si bob-brightside abriera la
-misma URL vería las filas de brightside; carol-northwind vería solo las
-de partners. Ninguno puede leer lo del otro aunque conozca el ID de la
-fila.
+**Figure 4 — `/data` shows only the rows of the acme tenant.** This
+is the strongest single piece of evidence for tenant isolation at
+the SQL layer. The `customer_data` table contains rows for three
+tenants (acme, brightside, partners); the `tenant_isolation` RLS
+policy rejects every read where `tenant_id !=
+current_setting('app.current_tenant_id')`. The page shows two rows
+(`contract-id ACME-2026-001` and `monthly-revenue $4.2M`) and
+exposes the SQL it ran below — including `SET LOCAL
+app.current_tenant_id = '1'`. If `bob-brightside` opened the same
+URL he would see only the brightside rows; `carol-northwind` would
+see only partners; none can read another's row even if they know
+the row id.
 
-### 5.5 Customer portal — `/files` con STS contra MinIO
+### 5.5 Customer portal — `/files` with STS against MinIO
 
 ![alice-acme lists pol-data-acme via STS](docs/screenshots/05-customer-files-alice-acme.png)
 
-**Figura 5 — STS funciona end-to-end para `alice-acme`.** El portal
-toma el access_token JWT de Keycloak (con `groups=[pol-customer-tenant-acme]`)
-y lo pasa al endpoint `/api/v1/sts/assume-role-with-web-identity` de
-MinIO. MinIO valida el JWT contra el JWKS de Keycloak, extrae el claim
-`groups`, lo mapea a la policy IAM `pol-customer-acme`, y devuelve
-credenciales temporales. La página muestra "STS OK — temporary access
-key …" y abajo lista el contenido del bucket `pol-data-acme`
-(`README.md`, 285 B). Si alice-acme intentara listar
-`pol-data-brightside` MinIO devolvería 403 AccessDenied por la IAM
-policy server-side, aunque el STS haya funcionado — defensa en dos
-capas (Postgres RLS + MinIO IAM).
+**Figure 5 — STS works end-to-end for `alice-acme`.** The portal
+takes the user's Keycloak access-token JWT (with
+`groups=[pol-customer-tenant-acme]`) and posts it to MinIO's
+`/api/v1/sts/assume-role-with-webidentity` endpoint. MinIO validates
+the JWT against Keycloak's JWKS, extracts the `groups` claim, maps
+it to the IAM policy `pol-customer-acme`, and returns temporary
+credentials. The page shows "STS OK — temporary access key …" and
+below that the contents of the `pol-data-acme` bucket
+(`README.md`, 285 B). If `alice-acme` tried to list
+`pol-data-brightside` MinIO would return 403 AccessDenied by the IAM
+policy server-side, even though the STS exchange itself succeeded —
+defense in depth (Postgres RLS + MinIO IAM).
 
-### 5.6 Customer portal — `/data` rechazado a un usuario sin tenant
+### 5.6 Customer portal — `/data` denied to a user without a tenant
 
 ![alice (employee) gets 403](docs/screenshots/06-customer-data-alice-403-no-tenant.png)
 
-**Figura 6 — `alice` (empleada sin grupo tenant) recibe 403.** Esta es
-la prueba de "deny by default". Alice pertenece a `pol-employees` y
-`pol-eng` — ninguno de esos grupos aparece en el diccionario
-grupo→tenant del portal, así que `_user_tenant()` devuelve `None` y el
-endpoint retorna `403: no tenant group in your JWT
-(groups=['pol-employees', 'pol-eng'])`. La respuesta expone
-explícitamente los grupos del JWT para que sea evidente al lector que
-la decisión está tomada en la capa de aplicación mirando los grupos,
-no en la DB. Un empleado interno no puede ver datos de tenants aunque
-haya pasado por Keycloak — el portal filtra antes de tocar la tabla.
+**Figure 6 — `alice` (employee with no tenant group) receives 403.**
+This is the "deny by default" proof. Alice belongs to `pol-employees`
+and `pol-eng`; neither group appears in the customer portal's
+group→tenant dictionary, so `_user_tenant()` returns `None` and the
+endpoint returns
+`403: no tenant group in your JWT (groups=['pol-employees', 'pol-eng'])`.
+The response exposes the JWT groups explicitly so it is obvious to
+the reader that the decision is made at the application layer by
+looking at the groups, not in the database. An internal employee
+cannot see tenant data even though they passed Keycloak — the
+portal filters before touching the table.
 
-## 6. Hallazgos que no estaban en el diseño
+## 6. Findings that were not in the design
 
-1. **MinIO no habla AWS IAM `PutUserPolicy`** — tiene su propia admin
-   API. Cuando lo supimos, el resto fue directo, pero la doc no lo dice.
-2. **Roles `SUPERUSER` se saltean RLS en Postgres** — fácil de pasar por
-   alto. `FORCE ROW LEVEL SECURITY` solo aplica si el usuario NO es
+These are the things the build uncovered that were not in
+`docs/design.md` and required real changes to make the POC work.
+
+1. **MinIO does not implement AWS IAM `PutUserPolicy`.** It has its
+   own admin API. Once we knew that the rest was direct, but the
+   documentation does not say it.
+2. **Roles `SUPERUSER` bypass RLS in Postgres** — easy to miss.
+   `FORCE ROW LEVEL SECURITY` only applies when the user is not a
    superuser.
-3. **boto3 enforce un mínimo de 20 chars para RoleArn** — pero el
-   camino STS claim-based de MinIO no quiere RoleArn. Hay que hacer HTTP
-   crudo para esa llamada.
-4. **El scope `groups` en Keycloak es un custom client scope**, no un
-   default-allowed scope en clientes públicos. Pedirlo explícito en
-   `scope=` se rechaza salvo que el cliente lo tenga en
-   `defaultClientScopes` o `optionalClientScopes`.
-5. **El validador v2 de Headscale exige que todo tag referenciado esté
-   declarado en `tagOwners`**, incluso cuando el tag viene de un claim
-   OIDC en lugar de un preauth key. (Los ACLs de preauth lo hubieran
-   agarrado, pero usamos database mode para el POC.)
-6. **Las cookies de sesión Flask firmadas con la misma clave entre
-   pods se descifran en los dos pods.** Los dos portales salieron con
-   el mismo placeholder `FLASK_SECRET`, así que la cookie firmada por
-   el intranet se descifraba en el customer — el customer entonces
-   mostraba `Welcome alice.` aunque alice nunca se había logueado ahí.
-   Se arregló con secrets únicos por pod
+3. **boto3 enforces a minimum `RoleArn` length of 20** — but
+   MinIO's claim-based STS path does not want a `RoleArn`. The STS
+   call has to be raw HTTP.
+4. **The `groups` scope in Keycloak is a custom client scope**, not a
+   default-allowed scope on public clients. Requesting it explicitly
+   in `scope=` is rejected unless the client has it in
+   `defaultClientScopes` or `optionalClientScopes`.
+5. **Headscale v2 requires every referenced tag to be declared in
+   `tagOwners`**, even when the tag maps from an OIDC claim rather
+   than a preauth key. (Pre-auth ACLs would have caught this, but the
+   POC uses database mode.)
+6. **Flask session cookies signed with the same key across pods
+   decrypt on both pods.** Both portals shipped with the same
+   `FLASK_SECRET` placeholder, so the intranet's signed cookie
+   decrypted on the customer pod — the customer then rendered
+   `Welcome alice.` even though alice had never logged into the
+   customer. Fixed with per-pod secrets
    (`polaris-poc-intranet-secret-CHANGE_ME` vs
    `polaris-poc-customer-secret-CHANGE_ME`).
-7. **Keycloak SSO bridgea usuarios a nivel realm, no a nivel cliente.**
-   Cuando alice autenticaba contra el intranet, Keycloak le quedaba con
-   sesión en el realm polaris. El customer redirigía a Keycloak, y
-   Keycloak la auto-logeaba (con `prompt=login` incluso pre-llenando
-   el username, así que solo se veía el campo password). El customer
-   quedaba autenticado como alice. Se arregló con `prompt=login` en
-   el `/login` Y `ctx.clear_cookies()` entre capturas. La respuesta de
-   producción sería clientes OIDC separados por portal — marcado como
-   TODO.
-8. **El `appUrl` de Grafana está baked en la imagen Docker**, así que
-   setear `GF_AUTH_GENERIC_OAUTH_AUTH_URL` y compañía no cambia el
-   `redirect_uri` que Grafana manda a Keycloak. Sin
-   `GF_SERVER_ROOT_URL=http://127.0.0.1:13001`, Grafana redirige a
-   `http://grafana.polaris.ts.net/login/generic_oauth` — que no
-   resuelve en el host de test.
-9. **`generic_oauth` de Grafana no implementa PKCE**, así que cualquier
-   cliente en Keycloak con `pkce.code.challenge.method` enforced
-   rechaza el authorize con *"Missing parameter:
-   code_challenge_method"*. Workaround: dejar PKCE off para el cliente
-   pol-grafana únicamente. Los pods intranet y customer se actualizaron
-   para mandar PKCE.
+7. **Keycloak SSO bridges users at the realm level, not per client.**
+   When alice authenticated against the intranet, Keycloak held a
+   session for her in the polaris realm. The customer pod then
+   redirected to Keycloak and Keycloak auto-logged her in (with
+   `prompt=login` even pre-filling the username field so only the
+   password was visible). The customer pod ended up authenticated as
+   alice. Fixed with `prompt=login` on `/login` plus
+   `ctx.clear_cookies()` between portal captures. The production
+   answer is per-portal OIDC clients — flagged as TODO.
+8. **Grafana's `appUrl` is baked into the Docker image**, so setting
+   `GF_AUTH_GENERIC_OAUTH_AUTH_URL` does not change the
+   `redirect_uri` Grafana sends to Keycloak. Without
+   `GF_SERVER_ROOT_URL=http://127.0.0.1:13001`, Grafana would
+   302-redirect to `http://grafana.polaris.ts.net/login/generic_oauth`,
+   which does not resolve on the test host.
+9. **Grafana's `generic_oauth` does not implement PKCE**, so any
+   client in Keycloak with `pkce.code.challenge.method` enforced
+   rejects the authorize call with `Missing parameter:
+   code_challenge_method`. Workaround: leave PKCE off for the
+   pol-grafana client only. The intranet and customer pods were
+   updated to send PKCE.
 
-## 7. Reproducir el setup
+## 7. Reproduction
 
-**Setup inicial** — host limpio con docker, kind, kubectl, helm:
+The full reproduction sequence is in
+[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md) — eleven flat
+tasks with the exact commands, expected outputs, and explanations
+for each. The same tasks are also bundled in `bin/bootstrap.sh`
+(one-shot) and `Makefile` (thin wrapper around it).
 
-```bash
-# 1. Levantar stack base
-cd polaris
-docker compose -f docker-compose.yml up -d
-docker compose -f docker-compose.yml run --rm minio-bootstrap   # 5 buckets + 6 IAM policies
+The one-shot entry point is `make bootstrap` from the repo root.
 
-# 2. Levantar cluster kind y conectarlo a la red de docker-compose
-kind create cluster --name polaris-eks-sim --config k3d/cluster.yaml
-docker network connect polaris_polaris_default polaris-eks-sim-control-plane
-docker network connect polaris_polaris_default polaris-eks-sim-worker
+## 8. Decisions taken
 
-# 3. Build + load imágenes
-docker build -t polaris-intranet:latest apps/intranet/
-docker build -t polaris-grafana:latest apps/grafana/
-docker build -t polaris-customer:latest apps/customer/
-kind load docker-image polaris-intranet:latest --name polaris-eks-sim
-kind load docker-image polaris-grafana:latest --name polaris-eks-sim
-kind load docker-image polaris-customer:latest --name polaris-eks-sim
+| Question                                                    | Choice                                                | Reasoning                                                      |
+| ----------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
+| Sync Keycloak groups to Headscale tags?                     | manual `headscale nodes tag` for the POC             | webhook automation is straightforward but out of scope         |
+| Schema-per-tenant or shared schema in Postgres?             | shared schema + RLS via `SET LOCAL`                   | cheaper ops, one migration applies to all                      |
+| Customer portal API-first or HTML-only?                     | HTML-only                                             | API contract is a separate workstream                          |
+| Prometheus?                                                 | skipped (Grafana + Postgres datasource only)          | metric scope is small; Grafana queries are enough              |
+| LocalStack or MinIO for S3+IAM?                             | MinIO with OIDC                                       | lighter, OIDC first-class via `MINIO_IDENTITY_OPENID_*`, native STS |
 
-# 4. Aplicar manifests
-kubectl --context=kind-polaris-eks-sim apply -f k3d/traefik.yaml
-kubectl --context=kind-polaris-eks-sim apply -f charts/intranet/deployment.yaml
-kubectl --context=kind-polaris-eks-sim apply -f charts/grafana/deployment.yaml
-kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml
+## 9. Known risks at POC close
 
-# 5. Aplicar policy de Headscale
-headscale --config headscale/config.yaml nodes tag --user polaris ...
-```
+| id | Risk                                                  | Mitigation                                              | Status      |
+| -- | ----------------------------------------------------- | ------------------------------------------------------- | ----------- |
+| R1 | Headscale single instance (no HA)                     | run two, peer them                                      | out of scope |
+| R2 | keycloak_db backed by Postgres → SPOF                 | external DB                                             | out of scope |
+| R3 | pgAdmin not deployed                                  | —                                                       | out of scope |
+| R4 | bootstrap boto3 has hardcoded credentials             | use Vault / SOPS                                        | out of scope |
+| R5 | Resource-owner password grant used by all portals     | switch to auth-code flow                                | planned     |
+| R6 | No MFA on Keycloak                                    | enable WebAuthn in prod                                 | planned     |
+| R7 | MinIO community archives discontinued                 | pin to cached `RELEASE.2024-01-18`                      | mitigated   |
+| R8 | MinIO OIDC aud claim requires per-client audience mapper | added in realm JSON + admin API                      | fixed       |
+| R9 | boto3 STS rejects empty RoleArn                       | raw HTTP for STS                                        | fixed       |
 
-**Validación** — registrar un nodo, loguearse, correr E2E:
+## 10. Out of scope
 
-```bash
-# Login cada usuario y verificar
-python3 tests/test_intranet_files.py alice polaris
-python3 tests/test_customer_data.py alice-acme polaris
-python3 tests/test_grafana_role.py carol polaris
-
-# Capturar las 6 figuras de este documento
-python3 tests/capture_screenshots.py
-```
-
-## 8. Decisiones tomadas
-
-| pregunta                                                  | elección                                  | razonamiento                                                |
-| --------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
-| ¿Sincronizar grupos de Keycloak a tags de Headscale?      | manual `headscale nodes tag` para el POC  | la automatización vía webhook es directa pero fuera de scope |
-| ¿Schema-per-tenant o esquema compartido en Postgres?      | esquema compartido + RLS vía `SET LOCAL`  | ops más barato, una migración aplica a todos                |
-| ¿Portal customer API-first o solo HTML?                   | solo HTML                                 | el contrato API es otro workstream                          |
-| ¿Prometheus?                                              | skipeado (solo Grafana + datasource Postgres) | el alcance de métricas es chico; las queries de Grafana alcanzan |
-| ¿LocalStack o MinIO para S3+IAM?                         | MinIO con OIDC                            | más liviano, OIDC first-class vía `MINIO_IDENTITY_OPENID_*`, STS nativo |
-
-## 9. Riesgos conocidos al cierre del POC
-
-| id | riesgo                                              | mitigación                              | estado      |
-| -- | --------------------------------------------------- | --------------------------------------- | ----------- |
-| R1 | Headscale instancia única (sin HA)                  | correr dos, peer-earlos                 | fuera de scope |
-| R2 | keycloak_db respaldado por Postgres → SPOF          | DB externa                              | fuera de scope |
-| R3 | pgAdmin no desplegado                               | —                                       | fuera de scope |
-| R4 | bootstrap boto3 con credenciales hardcodeadas        | usar Vault / SOPS                       | fuera de scope |
-| R5 | Direct grant (resource owner password) usado por todos los portales | pasar a auth-code flow     | planeado    |
-| R6 | Sin MFA en Keycloak                                 | habilitar WebAuthn en prod              | planeado    |
-| R7 | Archivos community de MinIO discontinuados           | pinear a `RELEASE.2024-01-18` cacheado  | mitigado    |
-| R8 | MinIO OIDC aud claim requiere audience mapper per-client | agregado en realm JSON + admin API | arreglado   |
-| R9 | boto3 STS rechaza RoleArn vacío                     | HTTP crudo para STS                     | arreglado   |
-
-## 10. Fuera de alcance
-
-- Certificados TLS (en prod: cert-manager + Let's Encrypt)
+- TLS certificates (in prod: cert-manager + Let's Encrypt)
 - Service mesh (Linkerd / Istio)
 - Backup / disaster recovery
-- Manejo de secretos (Vault, External Secrets Operator)
+- Secrets management (Vault, External Secrets Operator)
 - CI/CD (ArgoCD / Flux)
-- Stack de observabilidad (Prometheus + Loki + Tempo)
-- Federación OIDC multi-tenant de grado productivo
-- Análisis de costo a escala
+- Observability stack (Prometheus + Loki + Tempo)
+- Production-grade multi-tenant OIDC federation
+- Cost analysis at scale
 
-## Apéndice A — output end-to-end de muestra
+## Appendix A — sample end-to-end output
 
 ```
 === alice-acme (tenant=acme) ===
@@ -510,7 +389,7 @@ python3 tests/capture_screenshots.py
   /files: HTTP 403
 ```
 
-Caso negativo:
+Negative case:
 
 ```
 === alice-acme attempting pol-data-ops ===
@@ -519,7 +398,7 @@ Caso negativo:
   pol-data-ops: DENIED (AccessDenied: An error occurred (AccessDenied) ...)
 ```
 
-## Apéndice B — referencias
+## Appendix B — references
 
 - MinIO STS source: `minio/cmd/sts-handlers.go`
 - MinIO ARN format: `minio/internal/arn/arn.go`

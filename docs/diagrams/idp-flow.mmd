@@ -5,13 +5,13 @@ sequenceDiagram
     participant TS as Headscale<br/>(control plane)
     participant P as Portal<br/>(intranet/grafana/customer)
 
-    Note over Admin,KC: Day 0: admin setup
+    Note over Admin,KC: Setup: admin bootstraps the realm
     Admin->>KC: create realm `polaris`
     Admin->>KC: create groups (pol-employees, pol-ops, ...)
     Admin->>KC: create OIDC clients (pol-intranet, pol-grafana, pol-customer)
     Admin->>KC: create user alice@polaris.example<br/>assign group pol-employees
 
-    Note over U,P: Day 1: user logs in
+    Note over U,P: Runtime: user authenticates through the portals
     U->>TS: tailscale login (SSO via pol-tailscale client)
     TS->>KC: OIDC request (groups claim)
     KC-->>TS: groups=[pol-employees]

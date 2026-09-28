@@ -1,40 +1,41 @@
-# Polaris POC — Diseño de fase 2
+# Polaris POC — Design
 
-**Estado**: proposal (a revisar antes de codear)
-**Fecha**: 2026-09-28
-**Autor**: Cesar Marin
+**Status**: shipped (POC complete)
+**Date**: 2026-09-28
+**Author**: Cesar Marin
 **Working dir**: `/home/cmarin78/Documents/Projects/MiniMax/Headscale/polaris/`
 
 ## 0. Naming
 
-- **Organización / customer tenant root**: `Polaris` — fantasy name, nada de Axial,
-  CerberusByte u otros nombres reales.
-- **Cliente B2B**: `Acme Industries`, `Brightside Health` (fantasy).
-- **Partner externo**: `Northwind Consulting` (fantasy).
+- **Organization / customer tenant root**: `Polaris` — fantasy name,
+  nothing from the real company / product names.
+- **B2B customer**: `Acme Industries`, `Brightside Health` (fantasy).
+- **External partner**: `Northwind Consulting` (fantasy).
 
-## 1. Goal y no-goals
+## 1. Goal and non-goals
 
 ### Goal
 
-Demostrar que el reemplazo de OpenVPN por **Tailscale/Headscale + Keycloak (OIDC)
-+ k3d + Postgres** entrega:
+Demonstrate that replacing OpenVPN with **Tailscale/Headscale +
+Keycloak (OIDC) + kind + Postgres** delivers:
 
-1. **Granularidad por rol vía IDP** — grupos en Keycloak → tags en Tailnet →
-   ACLs en `acl/policy.hujson` → acceso a portales/servicios.
-2. **Tres portales** con dominios de acceso disjuntos:
-   - **intranet** para empleados
-   - **grafana** para ops/SRE
-   - **customer portal** para B2B customers + partners (multi-tenant)
-3. **Simulación de EKS** vía k3d, **simulación de RDS** vía Postgres en
-   docker — todo reproducible desde cero en una sola máquina.
-4. **Onboarding de usuarios externos** sin tocar el plano de control.
+1. **Per-role granularity via the IDP** — Keycloak groups →
+   Tailnet tags → ACLs in `acl/policy.hujson` → access to portals /
+   services.
+2. **Three portals** with disjoint access domains:
+   - **intranet** for employees
+   - **grafana** for ops/SRE
+   - **customer portal** for B2B customers + partners (multi-tenant)
+3. **EKS simulation** via kind, **RDS simulation** via Postgres in
+   docker — all reproducible from a clean host.
+4. **Onboarding of external users** without touching the control plane.
 
 ### Non-goals
 
-- No migrar producción real.
-- No usar nombres reales (Axial, CerberusByte, Helios, etc.).
-- No implementar alta disponibilidad ni autoscaling (single-node k3d basta).
-- No provisionar infraestructura cloud real — todo corre en docker local.
+- No real production migration.
+- No use of real product / company names.
+- No high availability, no autoscaling (single-node kind is enough).
+- No real cloud provisioning — everything runs in local docker.
 
 ## 2. Top-level architecture
 
@@ -44,86 +45,83 @@ Demostrar que el reemplazo de OpenVPN por **Tailscale/Headscale + Keycloak (OIDC
                                       ▼
                           ┌─────────────────────┐
                           │   Reverse proxy     │
-                          │   (traefik :8080)   │ ← compartido por los 3 portales
+                          │   (traefik :8080)   │ ← shared by all 3 portals
                           └──────────┬──────────┘
                                      │
         ┌────────────────────────────┼────────────────────────────┐
         │                            │                            │
         ▼                            ▼                            ▼
 ┌──────────────┐            ┌──────────────┐            ┌──────────────┐
-│   k3d        │            │   k3d        │            │   k3d        │
+│   kind       │            │   kind       │            │   kind       │
 │   cluster    │            │   cluster    │            │   cluster    │
-│   "polaris"  │            │   "polaris"  │            │   "polaris"  │
+│  "polaris-   │            │  "polaris-   │            │  "polaris-   │
+│  eks-sim"    │            │  eks-sim"    │            │  eks-sim"    │
 │              │            │              │            │              │
-│ namespace:   │            │ namespace:   │            │ namespace:   │
+│ ns:          │            │ ns:          │            │ ns:          │
 │  pol-        │            │  pol-        │            │  pol-        │
 │  intranet    │            │  grafana     │            │  customer    │
 │              │            │              │            │              │
 │ ┌──────────┐ │            │ ┌──────────┐ │            │ ┌──────────┐ │
 │ │ intranet │ │            │ │ grafana  │ │            │ │ customer │ │
-│ │ Flask+JS │ │            │ │ 10.x     │ │            │ │ portal   │ │
+│ │ Flask+JS │ │            │ │ 11.x OSS │ │            │ │ portal   │ │
 │ │ :3000    │ │            │ │ :3000    │ │            │ │ :3000    │ │
-│ └────┬─────┘ │            │ └────┬─────┘ │            │ └────┬─────┘ │
-│      │ tailscale sidecar  │      │ tailscale sidecar  │      │ tailscale sidecar
-│      │ tag:pol-intranet   │      │ tag:pol-grafana    │      │ tag:pol-customer-{tenant}
-└──────┼─────────────────────┴──────┼─────────────────────┴──────┼─────────────────────┘
-       │                            │                            │
-       └────────────────────────────┼────────────────────────────┘
-                                    │
-                                    ▼
-                  ┌────────────────────────────────────┐
-                  │       Tailscale/Headscale         │
-                  │       control plane                │
-                  │       (MagicDNS suffix:           │
-                  │        polaris.ts.net)            │
-                  └────────────────┬───────────────────┘
-                                   │
-       ┌───────────────────────────┼───────────────────────────┐
-       │                           │                           │
-       ▼                           ▼                           ▼
-┌──────────────┐            ┌──────────────┐            ┌──────────────┐
-│  Keycloak    │            │   Postgres   │            │  Per-user    │
-│  :8081       │            │   (RDS sim)  │            │  sidecar     │
-│              │            │   :5432      │            │  devices     │
-│ OIDC issuer  │            │              │            │              │
-│ pol-intranet │            │ pol_intranet │            │ employees,   │
-│ pol-grafana  │            │ pol_grafana  │            │ ops, B2B     │
-│ pol-customer │            │ pol_customer │            │ partners     │
+│ └──────────┘ │            │ └──────────┘ │            │ └──────────┘ │
 └──────────────┘            └──────────────┘            └──────────────┘
+                │
+                ▼
+        ┌──────────────────────────┐
+        │  Tailscale/Headscale     │
+        │  control plane           │
+        │  MagicDNS:               │
+        │   polaris.ts.net         │
+        └──────────────────────────┘
+                │
+   ┌────────────┼─────────────┐
+   ▼            ▼             ▼
+┌─────────┐ ┌──────────┐ ┌─────────┐
+│Keycloak │ │ Postgres │ │  Per-   │
+│ :8081   │ │ (RDS sim)│ │  user   │
+│         │ │  :5433   │ │ devices │
+│ OIDC    │ │          │ │         │
+│ issuer  │ │ pol_int  │ │employees│
+│ pol-*   │ │ pol_graf │ │ ops,    │
+│ clients │ │ pol_cust │ │ B2B     │
+└─────────┘ └──────────┘ └─────────┘
 ```
 
-Texto:
-
-- **k3d** corre un cluster Kubernetes con 1 server + 1 agent node.
-  Tres namespaces (`pol-intranet`, `pol-grafana`, `pol-customer`) corren
-  los portales como Deployments, cada uno con un sidecar de Tailscale.
-- **Headscale** (self-hosted) es el control plane de Tailscale; los tags
-  de los sidecars determinan qué pueden ver.
-- **Keycloak** es el IDP. OIDC emisor para los 3 portales; emisor
-  también para los tailscale-tag-sync (claims → tags).
-- **Postgres** corre como docker container, una DB por portal.
-- **Reverse proxy único** (traefik) en el host, rutea por hostname
+- **kind** runs a Kubernetes cluster with 1 server + 1 agent node.
+  Five namespaces (`pol-intranet`, `pol-grafana`, `pol-customer`,
+  `pol-storage`, `pol-system`) run the portals as Deployments. In
+  production each pod runs a Tailscale sidecar; in the POC the
+  portals reach MinIO and Postgres via the docker hostnames (the
+  kind nodes joined the docker-compose network).
+- **Headscale** (self-hosted) is the Tailscale control plane; the
+  sidecar tags determine what each pod can see.
+- **Keycloak** is the IDP. OIDC issuer for all 3 portals; also
+  issuer for the tailscale-tag-sync (claims → tags).
+- **Postgres** runs as a docker container, one database per portal.
+- **Single reverse proxy** (Traefik) on the host, routes by hostname
   (`intranet.polaris.ts.net`, `grafana.polaris.ts.net`,
   `customer.polaris.ts.net`).
 
-## 3. Componentes y servicios
+## 3. Components and services
 
-### 3.1 Identity — Keycloak (`keycloak:24`)
+### 3.1 Identity — Keycloak (24.x)
 
-| Realm | Clients | Groups | Roles |
-| --- | --- | --- | --- |
-| `polaris` | `pol-intranet`, `pol-grafana`, `pol-customer`, `pol-tailscale` (sync) | `pol-employees`, `pol-eng`, `pol-ops`, `pol-admin`, `pol-sales`, `pol-customer-tenant-acme`, `pol-customer-tenant-brightside`, `pol-partners`, `pol-partners-northwind` | `read`, `write`, `admin` (per-client) |
+| Realm    | Clients                                          | Groups                                                                                          | Roles                         |
+| -------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ----------------------------- |
+| `polaris`| `pol-intranet`, `pol-grafana`, `pol-customer`, `pol-minio` | `pol-employees`, `pol-eng`, `pol-ops`, `pol-admin`, `pol-customer-tenant-acme`, `pol-customer-tenant-brightside`, `pol-partners-northwind` | per-client `read`, `write`, `admin` |
 
-**Flujo de provisioning de un usuario**:
+**User provisioning flow**:
 
-1. Admin entra al Keycloak Admin Console (`http://localhost:8081`).
-2. Crea el usuario con username `first.last@pol-intranet` (o
+1. Admin opens the Keycloak Admin Console (`http://localhost:8081`).
+2. Creates the user with username `first.last@pol-intranet` (or
    `ext.last@partner-northwind`).
-3. Asigna el usuario a uno o más `Groups`.
-4. Por cada grupo, Keycloak emite un claim `groups` en el JWT con el
-   nombre del grupo.
+3. Assigns the user to one or more groups.
+4. For each group, Keycloak emits a `groups` claim in the JWT with the
+   group name.
 
-**OIDC → Tailscale tag mapping** (vía `tailscale tag-sync`):
+**OIDC → Tailscale tag mapping** (admin-scripted for the POC):
 
 ```
 keycloak group                 →  tailnet tag
@@ -136,414 +134,329 @@ pol-customer-tenant-brightside →  tag:pol-customer-brightside
 pol-partners-northwind         →  tag:pol-partners-northwind
 ```
 
-Esto se materializa con `tsidp` (Tailscale IDP proxy) o un sync manual
-`headscale nodes tag --identifier=<email> --tags=tag:<g>`. Para el POC
-arrancamos con **sync manual** vía script de admin; tsidp queda como
-nice-to-have para fase 3.
+The POC uses a manual sync (`headscale nodes tag --identifier=<email>
+--tags=tag:<g>`). `tsidp` (Tailscale's IDP proxy for automatic tag
+sync) is a follow-up.
 
 ### 3.2 Network — Headscale + tailscale sidecars
 
-Tags por namespace:
+Tags per namespace (production target; the POC uses docker hostnames
+inside the cluster):
 
-| Namespace | Tailscale tag | MagicDNS suffix | Acceso TCP |
-| --- | --- | --- | --- |
-| `pol-intranet` | `tag:pol-intranet` | `intranet.polaris.ts.net` | `:3000` (web) |
-| `pol-grafana` | `tag:pol-grafana` | `grafana.polaris.ts.net` | `:3000` (web) |
-| `pol-customer` | `tag:pol-customer-{tenant}` | `customer.polaris.ts.net` | `:3000` (web), `:5432` (admin) |
+| Namespace         | Tailscale tag                       | MagicDNS suffix                | TCP access                       |
+| ----------------- | ----------------------------------- | ------------------------------ | -------------------------------- |
+| `pol-intranet`    | `tag:pol-intranet`                  | `intranet.polaris.ts.net`      | `:3000` (web)                    |
+| `pol-grafana`     | `tag:pol-grafana`                   | `grafana.polaris.ts.net`       | `:3000` (web)                    |
+| `pol-customer`    | `tag:pol-customer-{tenant}`         | `customer.polaris.ts.net`      | `:3000` (web), `:5432` (admin)   |
+| `pol-storage`     | `tag:pol-minio`                     | `minio.polaris.ts.net`         | `:9000` (S3), `:9001` (console)  |
 
-ACL policy (en `acl/policy.hujson`):
+ACL policy (`acl/policy.hujson`, full file reproduced in
+[`TOPOLOGY.md`](TOPOLOGY.md) §4):
 
 ```jsonc
 {
   "tagOwners": {
-    "tag:pol-intranet":              ["group:pol-admin"],
-    "tag:pol-grafana":               ["group:pol-admin"],
-    "tag:pol-customer-acme":         ["group:pol-admin"],
-    "tag:pol-customer-brightside":   ["group:pol-admin"],
-    "tag:pol-partners-northwind":    ["group:pol-admin"]
+    "tag:pol-intranet":              ["user:polaris@"],
+    "tag:pol-grafana":               ["user:polaris@"],
+    "tag:pol-customer-acme":         ["user:polaris@"],
+    "tag:pol-customer-brightside":   ["user:polaris@"],
+    "tag:pol-partners-northwind":    ["user:polaris@"]
   },
   "acls": [
-    // empleados pueden leer intranet y grafana
     { "action": "accept",
       "src":    ["tag:pol-employees"],
       "dst":    ["tag:pol-intranet:80", "tag:pol-grafana:80"] },
-
-    // ops tiene write en grafana
     { "action": "accept",
       "src":    ["tag:pol-ops"],
       "dst":    ["tag:pol-grafana:80"] },
-
-    // customer-tenant-acme solo ve su portal y su DB
     { "action": "accept",
       "src":    ["tag:pol-customer-acme"],
       "dst":    ["tag:pol-customer-acme:80", "tag:pol-customer-acme:5432"] },
-
-    // partner-northwind solo ve su portal
     { "action": "accept",
       "src":    ["tag:pol-partners-northwind"],
       "dst":    ["tag:pol-customer-partners:80"] },
-
-    // admin todo
     { "action": "accept",
       "src":    ["tag:pol-admin"],
       "dst":    ["tag:*"] }
-  ],
-  "ssh": [
-    // ops puede SSH bastion en k3d nodes para debug
-    { "action": "accept",
-      "src":    ["tag:pol-ops"],
-      "dst":    ["tag:pol-eng:22"],
-      "users":  ["root"] }
   ]
 }
 ```
 
-### 3.3 Compute — k3d cluster
+### 3.3 Compute — kind cluster
 
-Cluster: `polaris-eks-sim`
+Cluster: `polaris-eks-sim`. 1 control-plane + 1 agent (sufficient for
+the POC). Traefik ingress controller. Five namespaces + per-namespace
+RBAC.
 
-- 1 server + 1 agent (suficiente para el POC).
-- Inicia con `--registry-create` para empujar imágenes locales rápido.
-- Traefik ingress controller (built-in en k3d image).
-- 3 namespaces + RBAC por namespace.
+The original design used k3d, pivoted to kind because `ghcr.io` is
+blocked on this host.
 
 ### 3.4 Data — Postgres
 
-| DB | Owner | Usuarios | Notas |
-| --- | --- | --- | --- |
-| `pol_intranet` | `pol_intranet_app` | `pol_intranet_ro`, `pol_intranet_rw` | directorio, wiki, anuncios |
-| `pol_grafana` | `grafana` | (default) | metadata, dashboards |
-| `pol_customer` | `pol_customer_app` | un user por tenant | tenant data |
+| DB             | Owner             | Users                  | Notes                          |
+| -------------- | ----------------- | ---------------------- | ------------------------------ |
+| `pol_intranet` | `pol_intranet_app`| `pol_intranet_ro`, `pol_intranet_rw` | directory, wiki, announcements |
+| `pol_grafana`  | `grafana`         | (default)              | metadata, dashboards           |
+| `pol_customer` | `pol_customer_app`| one user per tenant    | tenant data                    |
 
-Postgres no se expone al tailnet salvo para el `tag:pol-customer-{tenant}`
-específico (ver ACL arriba). El `intranet` y `grafana` leen de su propia
-DB vía service name del cluster, no vía tailnet.
+Postgres is not exposed on the tailnet for the POC; the
+customer-tagged pods reach it via the docker-compose network instead.
 
-### 3.5 Portales
+### 3.5 Portals
 
 #### 3.5.1 Intranet (`pol-intranet`)
 
-- Stack: Python Flask + plantilla server-side (o React si se quiere más
-  rico, pero Flask alcanza para el POC).
+- Stack: Python Flask + server-side templates.
 - Endpoints:
-  - `GET /` — home con logo Polaris, links a Grafana + Customer Portal
-  - `GET /directory` — tabla con empleados (id, email, group, location)
-  - `GET /wiki` — markdown renderizado desde `wiki/` en el repo
-  - `GET /healthz` — JSON status
-- Auth: OIDC contra Keycloak (client `pol-intranet`).
-- Authorization: cualquier usuario en `pol-employees` puede leer.
+  - `GET /`         — home with logo and links to Grafana + Customer Portal
+  - `GET /directory` — table of employees
+  - `GET /files`    — list of files in the user's MinIO bucket
+  - `GET /healthz`  — JSON status
+- Auth: OIDC against Keycloak (client `pol-intranet`).
+- Authorization: any user in `pol-employees` can read.
 
 #### 3.5.2 Grafana (`pol-grafana`)
 
-- Stack: Grafana 10.x oficial.
-- Auth: OIDC contra Keycloak (client `pol-grafana`).
-- Role mapping en Grafana config:
+- Stack: Grafana 11.3 OSS.
+- Auth: OIDC against Keycloak (client `pol-grafana`).
+- Role mapping in Grafana config:
   - `pol-admin` → Grafana Admin
-  - `pol-ops` → Editor
-  - otros grupos → Viewer (read-only)
-- Datasources preconfigurados:
-  - Postgres `pol_grafana` (metadata)
-  - Prometheus (opcional, si se agrega monitoring stack)
-- Dashboards seed: 1 dashboard por namespace (`pol-intranet`,
-  `pol-grafana`, `pol-customer`).
+  - `pol-ops`   → Editor
+  - other groups → Viewer (read-only)
+- Datasources preconfigured:
+  - Postgres `pol_grafana` (metadata, dashboards)
+- Dashboards seeded: time-series demo of `polaris_metrics` (service ×
+  region × minute).
 
 #### 3.5.3 Customer Portal (`pol-customer`)
 
-- Stack: Flask con render multi-tenant.
+- Stack: Flask with multi-tenant rendering.
 - Endpoints:
-  - `GET /` — landing con info del tenant (basado en `groups` claim)
-  - `GET /data` — vista tabular de la DB del tenant
-  - `GET /files` — lista archivos del bucket S3 del tenant (proxy a MinIO)
-  - `POST /api/upload` — sube archivos al bucket (placeholder, no usado en POC)
-- Auth: OIDC contra Keycloak (client `pol-customer`).
-- Tenant resolution: del claim `groups` se extrae
-  `pol-customer-tenant-{name}` y se filtra la query SQL por ese nombre.
-- Aislamiento:
-  - NetworkPolicy en k3d rechaza tráfico cross-tenant en el namespace
-  - ACL en Headscale separa los tags por tenant
-  - SQL: WHERE `tenant = current_setting('app.tenant')` para evitar
-    data leaks si un usuario cambia de tag
-  - MinIO IAM policies: el bucket policy + STS temporal credentials
-    emitidos por Keycloak OIDC limitan qué archivos puede listar/subir
-    cada tenant
+  - `GET /`         — landing with tenant info (from `groups` claim)
+  - `GET /data`     — tabular view of the tenant's rows
+  - `GET /files`    — list of files in the tenant's S3 bucket (proxy to MinIO)
+- Auth: OIDC against Keycloak (client `pol-customer`).
+- Tenant resolution: the `groups` claim is matched against
+  `pol-customer-tenant-{name}` to resolve the tenant name; that name
+  is then translated to a `tenant_id` used in
+  `SET LOCAL app.current_tenant_id`.
+- Isolation layers:
+  - Headscale ACL separates the customer tags by tenant
+  - SQL: `WHERE tenant_id = current_setting('app.current_tenant_id')`
+    so a bug in the portal cannot leak cross-tenant rows
+  - MinIO IAM policies: the bucket policy + STS temporary credentials
+    limit which files each tenant can list or upload
 
-### 3.6 Storage — MinIO como S3 sim con OIDC contra Keycloak
+### 3.6 Storage — MinIO as S3 sim with OIDC against Keycloak
 
-Elegimos **MinIO** sobre LocalStack porque:
+MinIO chosen over LocalStack because:
 
-- Binario único, imagen ~150 MB (LocalStack pesa ~1.5 GB y arranca 30+ s)
-- Soporta OIDC nativo desde RELEASE.2022-12-02 (Keycloak es first-class)
-- Misma API que S3 (`s3://`, `aws s3 cp`, `boto3` sin cambios)
-- STS-style temporary credentials basadas en el JWT de Keycloak
+- Single binary, ~150 MB image (LocalStack ~1.5 GB and 30+ s to start)
+- Native OIDC support since RELEASE.2022-12-02 (Keycloak is first-class)
+- Same API as S3 (`s3://`, `aws s3 cp`, `boto3` unchanged)
+- STS-style temporary credentials based on the Keycloak JWT
 
 ```
 +-------------------------------------------+
 |  MinIO  (minio/minio:RELEASE.2024-...)    |
 |                                           |
 |  OIDC config:                             |
-|    issuer = http://keycloak:8081/realms/polaris
+|    issuer    = http://keycloak:8080/realms/polaris
 |    client_id = pol-minio                  |
 |    claim_name = groups                    |
 |                                           |
 |  Policies (MinIO IAM):                    |
-|    pol-data-employees-readwrite           |
-|    pol-data-ops-admin                     |
-|    pol-data-acme-readwrite                |
-|    pol-data-brightside-readwrite          |
-|    pol-data-partners-readonly             |
-|                                           |
-|  Bucket → policy mapping:                 |
-|    pol-data-employees  → ...-readwrite    |
-|    pol-data-ops        → ...-admin        |
-|    pol-data-acme       → ...-readwrite    |
-|    pol-data-brightside → ...-readwrite    |
-|    pol-data-partners   → ...-readonly     |
+|    pol-employees-rw                       |
+|    pol-ops-rw                             |
+|    pol-admin-rw                           |
+|    pol-customer-acme-rw                   |
+|    pol-customer-brightside-rw             |
+|    pol-partners-northwind-rw              |
 |                                           |
 |  Group claim → policy mapping:            |
-|    pol-employees                → pol-data-employees-readwrite
-|    pol-ops                      → pol-data-ops-admin
-|    pol-admin                    → (all)
-|    pol-customer-tenant-acme     → pol-data-acme-readwrite
-|    pol-customer-tenant-brightside → pol-data-brightside-readwrite
-|    pol-partners-northwind       → pol-data-partners-readonly
+|    pol-employees                → pol-employees-rw
+|    pol-ops                      → pol-ops-rw
+|    pol-admin                    → pol-admin-rw
+|    pol-customer-tenant-acme     → pol-customer-acme-rw
+|    pol-customer-tenant-brightside → pol-customer-brightside-rw
+|    pol-partners-northwind       → pol-partners-northwind-rw
 +-------------------------------------------+
 ```
 
-**Flujo end-to-end**:
+**End-to-end flow**:
 
-1. Usuario abre `https://intranet.polaris.ts.net/files`.
-2. Portal detecta que el endpoint requiere credenciales S3 y redirige al
-   usuario al flow OIDC contra Keycloak (ya autenticado si SSO activo).
-3. Portal pide a MinIO `AssumeRoleWithWebIdentity` con el JWT de Keycloak
-   (`https://keycloak:8081/realms/polaris` como issuer).
-4. MinIO valida el JWT contra Keycloak, extrae el claim `groups`,
-   mapea a MinIO policies según la tabla de arriba, y devuelve
-   access/secret key temporales (STS, duran 1 h por default).
-5. Portal usa las credenciales STS para listar/subir archivos
+1. User opens `https://intranet.polaris.ts.net/files`.
+2. Portal detects that the endpoint needs S3 credentials and starts
+   the OIDC flow against Keycloak (already authenticated if SSO is
+   active).
+3. Portal calls MinIO `AssumeRoleWithWebIdentity` with the Keycloak JWT
+   (`http://keycloak:8080/realms/polaris` as issuer).
+4. MinIO validates the JWT against Keycloak, extracts the `groups`
+   claim, maps to a MinIO policy per the table above, and returns
+   temporary access/secret keys (STS, default TTL 1 h).
+5. Portal uses the STS credentials to list / upload
    (`aws s3 ls s3://pol-data-employees/`).
-6. Cada request S3 es evaluada por el bucket policy + IAM policy en
-   MinIO → si la policy no incluye el path, denegado.
+6. Every S3 request is evaluated by both the bucket policy and the IAM
+   policy in MinIO — if either denies, the request is rejected.
 
-**Diagrama**:
+**Why this split**:
 
-```
-   user browser                    k3d pod               MinIO            Keycloak
-        │                              │                    │                  │
-        │ open /files                 │                    │                  │
-        ├─────────────────────────────►                    │                  │
-        │                              │ redirect to OIDC  │                  │
-        │                              ├──────────────────────────────────────►
-        │                              │◄─────── JWT (groups) ────────────────
-        │                              │ AssumeRoleWithWebIdentity             │
-        │                              ├───────────────────►                   │
-        │                              │                   validate JWT ──────►│
-        │                              │                   resolve groups ───►│
-        │                              │◄───── STS creds (1h) ─────────────────
-        │                              │                                       │
-        │                              │ aws s3 ls (using STS creds)          │
-        │                              ├───────────────────►                   │
-        │                              │ bucket policy check                  │
-        │                              │ IAM policy check (groups→policy)     │
-        │                              │◄──── 200 OK or 403 ──────────────────
-        │◄────── HTML with file list ──┤                                       │
-```
-
-**Tag/ACL additions**:
-
-```jsonc
-// acl/policy.hujson — addendum
-{
-  "tagOwners": {
-    "tag:pol-minio": ["group:pol-admin"]   // solo admin puede mover el tag del proxy
-  },
-  "acls": [
-    // todos los sidecars (incluidos los customer) pueden hablarle al MinIO proxy
-    // MinIO es el ÚNICO endpoint expuesto al tailnet que NO está particionado
-    // por tenant: el aislamiento se hace en MinIO IAM, no en la red.
-    { "action": "accept",
-      "src":    ["tag:pol-employees", "tag:pol-ops", "tag:pol-admin",
-                 "tag:pol-customer-acme", "tag:pol-customer-brightside",
-                 "tag:pol-partners-northwind"],
-      "dst":    ["tag:pol-minio:9000"] },
-
-    // admin tiene el puerto de MinIO console (UI de admin) para crear buckets
-    { "action": "accept",
-      "src":    ["tag:pol-admin"],
-      "dst":    ["tag:pol-minio:9001"] }
-  ]
-}
-```
-
-**Por qué este split**:
-- La capa Tailscale ACL decide si el request llega a MinIO (network layer).
-- MinIO IAM decide qué bucket/key puede ver el usuario (object layer).
-- Dos capas independientes: si una falla, la otra todavía contiene.
+- The Tailscale ACL decides whether the request reaches MinIO (network
+  layer).
+- MinIO IAM decides which bucket / key the user can see (object layer).
+- Two independent layers — if one fails, the other still contains.
 
 ### 3.7 Bucket layout
 
-| Bucket | Owner | Tenant policy | Notas |
-| --- | --- | --- | --- |
-| `pol-data-employees` | `pol-admin` | readwrite por `pol-employees` | wiki/uploads, anuncios, attachments |
-| `pol-data-ops` | `pol-admin` | admin por `pol-ops` | logs dumps, k8s manifests, runbooks |
-| `pol-data-acme` | `pol-admin` | readwrite por `pol-customer-tenant-acme` | data del tenant Acme |
-| `pol-data-brightside` | `pol-admin` | readwrite por `pol-customer-tenant-brightside` | data del tenant Brightside |
-| `pol-data-partners` | `pol-admin` | readonly por `pol-partners-northwind` | data compartida con partners |
+| Bucket                 | Owner       | Tenant policy                          | Notes                            |
+| ---------------------- | ----------- | -------------------------------------- | -------------------------------- |
+| `pol-data-employees`   | `pol-admin` | readwrite by `pol-employees`           | wiki uploads, announcements      |
+| `pol-data-ops`         | `pol-admin` | admin by `pol-ops`                     | log dumps, k8s manifests, runbooks |
+| `pol-data-acme`        | `pol-admin` | readwrite by `pol-customer-tenant-acme`| Acme tenant data                 |
+| `pol-data-brightside`  | `pol-admin` | readwrite by `pol-customer-tenant-brightside` | Brightside tenant data     |
+| `pol-data-partners`    | `pol-admin` | readwrite by `pol-partners-northwind`  | shared partner data              |
 
-Cada bucket tiene un objeto seed (`README.md` con info del tenant) para
-verificar en el walkthrough que el aislamiento funciona.
+Each bucket has a seed object (`README.md` with tenant info) to verify
+that isolation works during the walkthrough.
 
 ## 4. Onboarding flows
 
-### 4.1 Empleado interno (e.g., `ada@polaris.example`)
+### 4.1 Internal employee (e.g. `alice@polaris.example`)
 
 ```
-1. admin entra a Keycloak admin console
-2. crea usuario ada@polaris.example, password temporal
-3. asigna grupos: pol-employees + pol-eng
-4. ada corre:
-   $ tailscale login --login-server=http://headscale:8080
-   → SSO via Keycloak (client pol-tailscale)
-   → claims `groups` llegan al control plane
-   → headscale nodes tag --identifier=ada@... --tags='tag:pol-employees,tag:pol-eng'
-5. ada entra a intranet.polaris.ts.net → OIDC contra pol-intranet
-   → ya está autenticada, ve el directorio
+1. Admin opens Keycloak admin console
+2. Creates user alice@polaris.example, temporary password
+3. Assigns groups: pol-employees + pol-eng
+4. Admin runs:
+   $ headscale nodes tag --identifier=alice@... \
+       --tags='tag:pol-employees,tag:pol-eng'
+5. Alice opens intranet.polaris.ts.net → OIDC against pol-intranet
+   → already authenticated, sees the directory
 ```
 
-### 4.2 Cliente B2B (`ext.alice@acme.example`)
+### 4.2 B2B customer (`alice-acme`)
 
 ```
-1. admin crea el usuario en Keycloak con grupo pol-customer-tenant-acme
-2. admin crea un preauth key tagged tag:pol-customer-acme
-   $ headscale preauthkeys create --user acme-admin \
+1. Admin creates the user in Keycloak with group pol-customer-tenant-acme
+2. Admin creates a preauth key tagged tag:pol-customer-acme
+   $ headscale preauthkeys create --user polaris \
        --reusable --expiration 168h \
        --tags tag:pol-customer-acme
-3. alice descarga tailscale + registra con la key
-4. magicDNS resuelve customer.polaris.ts.net → 100.64.0.50 (sidecar)
-5. alice entra a customer.polaris.ts.net → OIDC contra pol-customer
-   → claim groups=pol-customer-tenant-acme
-   → portal filtra y muestra solo los datos de acme
+3. User downloads tailscale + registers with the key
+4. MagicDNS resolves customer.polaris.ts.net → 100.x.y.z (sidecar)
+5. User opens customer.polaris.ts.net → OIDC against pol-customer
+   → claim groups=[pol-customer-tenant-acme]
+   → portal filters and shows only Acme data
 ```
 
-### 4.3 Partner (`ext.bob@northwind.example`)
+### 4.3 Partner (`carol-northwind`)
 
-Igual al B2B pero con `tag:pol-partners-northwind`. Acceso más limitado:
-solo lectura sobre un set de endpoints pre-aprobados.
+Same as the B2B flow but with `tag:pol-partners-northwind`. More
+limited access: read-only on a pre-approved set of endpoints.
 
-## 5. Tag matrix (resumen)
+## 5. Tag matrix (summary)
 
-| Tag | Quién | Qué puede |
-| --- | --- | --- |
-| `tag:pol-employees` | empleados en `pol-employees` | intranet:80, grafana:80, minio:9000 (sts), bucket pol-data-employees (rw) |
-| `tag:pol-eng` | ingenieros | intranet:80, k3d bastion:22 |
-| `tag:pol-ops` | SRE / ops | grafana:80 (write), intranet:80, k3d bastion:22, minio:9000, bucket pol-data-ops (admin) |
-| `tag:pol-admin` | admins (1-2 personas) | todo (incluye minio:9001 console) |
-| `tag:pol-customer-acme` | usuarios de Acme | customer portal Acme, DB Acme, minio:9000, bucket pol-data-acme (rw) |
-| `tag:pol-customer-brightside` | usuarios de Brightside | customer portal Brightside, DB Brightside, minio:9000, bucket pol-data-brightside (rw) |
-| `tag:pol-partners-northwind` | usuarios de Northwind | customer portal Partners, minio:9000, bucket pol-data-partners (ro) |
-| `tag:pol-minio` | solo el MinIO proxy (k8s service) | exporta la API S3 al tailnet |
+| Tag                          | Who                          | What they can reach                                  |
+| ---------------------------- | ---------------------------- | ---------------------------------------------------- |
+| `tag:pol-employees`          | employees in `pol-employees` | intranet:80, grafana:80, minio:9000 (sts), bucket `pol-data-employees` (rw) |
+| `tag:pol-eng`                | engineers                    | intranet:80, kind bastion:22                          |
+| `tag:pol-ops`                | SRE / ops                    | grafana:80 (write), intranet:80, kind bastion:22, minio:9000, bucket `pol-data-ops` (admin) |
+| `tag:pol-admin`              | admins (1–2 people)          | everything (including minio:9001 console)            |
+| `tag:pol-customer-acme`      | Acme users                   | customer portal Acme, DB Acme, minio:9000, bucket `pol-data-acme` (rw) |
+| `tag:pol-customer-brightside`| Brightside users             | customer portal Brightside, DB Brightside, minio:9000, bucket `pol-data-brightside` (rw) |
+| `tag:pol-partners-northwind` | Northwind users              | customer portal Partners, minio:9000, bucket `pol-data-partners` (rw) |
+| `tag:pol-minio`              | MinIO pod only               | exposes the S3 API on the tailnet                     |
 
-Default-deny: cualquier tag no listado denegado a todo.
+Default-deny: any tag not listed is denied everywhere.
 
-## 6. File map (target — fase 3, después de aprobación)
+## 6. File map
 
 ```
 polaris/
-├── README.md                        quickstart
-├── docker-compose.yml               keycloak + postgres + headscale + minio
-├── docker-compose.k3d.yml           (alternativa) k3d + portales
-├── k3d/
-│   ├── cluster.yaml                 1 server + 1 agent
-│   └── apply.sh                     crea cluster + namespaces + ingress
-├── charts/
-│   ├── intranet/                    Helm chart (Deployment + Service + tailscale sidecar)
-│   ├── grafana/                     Helm chart
-│   ├── customer/                    Helm chart (multi-tenant aware)
-│   └── minio/                       Helm chart (StatefulSet + 1 PVC + Service + sidecar)
+├── README.md                        quickstart + TL;DR
+├── RUN_REPORT.md                    task list + E2E test (6 figures) + findings
+├── RUN_REPORT.docx                  same content, .docx for sharing
+├── docker-compose.yml               keycloak + postgres + headscale + minio + bootstrap
+├── .env.example                     credentials template
 ├── acl/
-│   └── policy.hujson                tagOwners + acls + ssh
-├── apps/
-│   ├── intranet/                    Flask app
-│   ├── grafana-provisioning/        datasources, dashboards, oidc config
-│   └── customer/                    Flask app (multi-tenant)
-├── keycloak/
-│   ├── realm-export.json            realm preconfig (groups, clients, users)
-│   └── seed-users.sh                bootstrap admin + 3-4 demo users
+│   └── policy.hujson                tagOwners + ACLs + SSH
 ├── headscale/
 │   └── config.yaml                  control plane config
-├── minio/
-│   ├── oidc-config.env              OIDC settings para MinIO
-│   ├── policies.json                5 IAM policies (employees/ops/admin/acme/brightside/partners)
-│   ├── bucket-policies.json         5 bucket policies
-│   └── seed-buckets.sh              crea los 5 buckets + sube README.md a cada uno
+├── keycloak/
+│   └── realm-polaris.json           preconfigured realm
 ├── postgres/
-│   └── init.sql                     schemas + seed data
-├── notes/
-│   └── walkthrough.md               paso a paso end-to-end
-└── docs/
-    ├── design.md                    ← este archivo
-    └── diagrams/
-        ├── architecture.mmd
-        ├── idp-flow.mmd
-        ├── tag-matrix.mmd
-        └── iam-flow.mmd             secuencia MinIO STS + Keycloak OIDC
+│   └── init.sql                     schemas + seed data + RLS policy
+├── minio/
+│   └── policies.json                reference doc for the IAM policies
+├── scripts/
+│   ├── Dockerfile.minio-bootstrap
+│   └── minio_bootstrap.py           boto3 + raw HTTP admin API
+├── apps/
+│   ├── intranet/{app.py,Dockerfile}
+│   ├── grafana/{Dockerfile,grafana.ini,provisioning/datasources/}
+│   └── customer/{app.py,Dockerfile}
+├── charts/
+│   ├── traefik.yaml                 Traefik DaemonSet + NodePort
+│   ├── intranet/deployment.yaml
+│   ├── grafana/deployment.yaml
+│   └── customer/deployment.yaml
+├── docs/
+│   ├── design.md                    ← this file
+│   ├── TOPOLOGY.md                  diagrams + access matrix + policy walkthrough
+│   ├── REPRODUCIBILITY.md           step-by-step commands + outputs + explanations
+│   └── diagrams/
+│       ├── architecture.mmd
+│       ├── idp-flow.mmd
+│       ├── tag-matrix.mmd
+│       └── iam-flow.mmd
+├── k3d/
+│   ├── cluster.yaml                 kind cluster config
+│   ├── traefik.yaml                 Traefik ingress
+│   └── test-pod.yaml                connectivity test
+└── tests/                           E2E scripts (see RUN_REPORT §A)
 ```
 
-## 7. Riesgos y open questions
+## 7. Risks and open questions
 
-### 7.1 Riesgos
+### 7.1 Risks
 
-| # | Riesgo | Mitigación |
-| --- | --- | --- |
-| R1 | k3d + tailscale sidecar: cada pod necesita `/dev/net/tun` y permisos NET_ADMIN | usar `tailscale/k8s-operator` o chart oficial; para POC, init container con hostPath |
-| R2 | Keycloak `groups` claim llega al control plane pero el mapping a tags es manual | empezar con sync manual (`headscale nodes tag`); tsidp como follow-up |
-| R3 | Customer data isolation: SQL injection o bug en portal filtra data cross-tenant | NetworkPolicy + ACL + `SET LOCAL app.tenant` en cada query |
-| R4 | MagicDNS suffix collision con otros POCs corriendo en paralelo | usar `polaris.ts.net` y stop los POCs anteriores antes |
-| R5 | k3d consume mucha RAM (~4 GB) junto con keycloak + postgres + headscale + minio | usar `--memory=2G` por container, total ~10 GB; documentar mínimo 16 GB host |
-| R6 | Tailscale sidecars dentro de k3d pods no pueden ver el `/dev/net/tun` del host por defecto | instalar k3d con `--k3s-arg="--kubelet-arg=feature-gates=KernelTun=true"` o usar `tailscale/k8s-operator` |
-| R7 | MinIO OIDC + Keycloak: el claim `groups` puede llegar con prefijo del realm path (`/pol-employees`) y romper el policy mapping | configurar `claim_name = groups` Y `claim_prefix = ""` en MinIO; verificar con un user de prueba antes de asumir que funciona |
-| R8 | STS credentials tienen TTL (default 1h); reauth SSO debería ser transparente pero a veces no | usar session cookies + OIDC refresh token en el portal; minimo impacto en POC con TTL 12h |
-| R9 | Bucket policy + IAM policy = dos lugares donde definir permisos; pueden divergir | las IAM policies son el "source of truth" y los bucket policies solo restringen paths específicos (deny por defecto si IAM no permite) |
+| #  | Risk                                                                                                | Mitigation                                                                                              |
+| -- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| R1 | kind + tailscale sidecar: each pod needs `/dev/net/tun` and NET_ADMIN                               | use `tailscale/k8s-operator` or official chart; for POC, init container with hostPath                |
+| R2 | Keycloak `groups` claim reaches the control plane but the mapping to tags is manual                  | start with manual sync (`headscale nodes tag`); `tsidp` as follow-up                                  |
+| R3 | Customer data isolation: SQL injection or a bug in the portal leaks cross-tenant data              | Headscale ACL + `SET LOCAL app.current_tenant_id` on every query                                       |
+| R4 | MagicDNS suffix collision with other POCs running in parallel                                       | use `polaris.ts.net` and stop the other POCs first                                                     |
+| R5 | kind consumes a lot of RAM (~4 GB) along with Keycloak + Postgres + Headscale + MinIO               | use `--memory=2G` per container, total ~10 GB; document the 16 GB minimum on the host                 |
+| R6 | Tailscale sidecars inside kind pods cannot see the host's `/dev/net/tun` by default                  | install kind with the right feature flags, or use `tailscale/k8s-operator`                              |
+| R7 | MinIO OIDC + Keycloak: the `groups` claim can arrive with the realm path prefix (`/pol-employees`) and break the policy mapping | configure `claim_name = groups` AND empty `claim_prefix` in MinIO; verify with a test user  |
+| R8 | STS credentials have a TTL (default 1 h); re-auth SSO should be transparent but sometimes is not   | use session cookies + OIDC refresh token in the portal; TTL bumped to 12 h for the POC                |
+| R9 | Bucket policy + IAM policy = two places to define permissions; can diverge                          | IAM policies are the source of truth; bucket policies only restrict specific paths (default deny if IAM denies) |
 
-### 7.2 Resolved decisions (round 1)
+### 7.2 Resolved decisions
 
-| # | Pregunta | Decisión | Por qué |
-| --- | --- | --- | --- |
-| # | Pregunta | Decisión | Por qué |
-| --- | --- | --- | --- |
-| 1 | OIDC vs sync manual para Keycloak→Tailscale tags | **sync manual** vía `headscale nodes tag` | ~30 líneas de Python; tsidp queda como follow-up posterior |
-| 2 | Schema-per-tenant vs RLS en Postgres | **RLS con `SET LOCAL app.tenant`** | SQL estándar, tests de aislamiento más fáciles; schema-per-tenant agrega complejidad de migraciones |
-| 3 | Customer portal REST vs HTML | **solo HTML** para el POC | REST + API key per tenant se agrega más adelante cuando se valide el flujo de UI |
-| 4 | Monitoring skeleton | **skip Prometheus**, Grafana con Postgres datasource | no necesitamos alerting para el POC; Grafana ya tiene metadata DB propia |
-| 5 (nueva) | IAM + S3 sim | **MinIO con OIDC contra Keycloak** | lightweight, OIDC first-class, STS-style creds; LocalStack es overkill para POC |
+| #   | Question                                              | Decision                                          | Why                                                                                |
+| --- | ----------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 1   | OIDC vs manual sync for Keycloak → Tailscale tags     | manual sync via `headscale nodes tag`             | ~30 lines of Python; `tsidp` is a follow-up                                        |
+| 2   | Schema-per-tenant vs RLS in Postgres                  | RLS with `SET LOCAL app.tenant`                   | standard SQL, easier isolation tests; schema-per-tenant adds migration complexity  |
+| 3   | Customer portal REST vs HTML                          | HTML-only for the POC                             | REST + API key per tenant added later when the UI flow is validated                 |
+| 4   | Monitoring skeleton                                   | skip Prometheus, Grafana with Postgres datasource | no need for alerting in the POC; Grafana has its own DB metadata                    |
+| 5   | IAM + S3 sim                                          | MinIO with OIDC against Keycloak                  | lightweight, OIDC first-class, STS-style creds; LocalStack is overkill              |
 
-## 8. Plan de replicación (cuando aprobemos)
+## 8. Replication plan
 
-1. **Etapa 1 — Stack base**: docker-compose con Keycloak + Postgres +
-   Headscale + MinIO. Levantar, verificar healthchecks, configurar
-   MinIO OIDC contra Keycloak, crear 5 buckets con sus políticas IAM.
-2. **Etapa 2 — Cluster kind (simulando EKS)**: levantar el cluster,
-   crear namespaces, deployar Traefik. Verificar que un pod puede
-   resolver `headscale` y registrar un sidecar. Verificar que el pod
-   puede hablarle a MinIO via tailnet (STS test).
-3. **Etapa 3 — Portal intranet**: Flask + OIDC + Keycloak + endpoint
-   `/files` con proxy STS a MinIO. Walkthrough end-to-end con login SSO.
-4. **Etapa 4 — Portal Grafana**: OIDC + role mapping + datasources.
-   Walkthrough con `pol-admin` y `pol-employees`.
-5. **Etapa 5 — Portal customer multi-tenant**: aislamiento SQL RLS +
-   ACL + MinIO IAM por tenant. Walkthrough con Acme + Brightside +
-   Northwind.
-6. **Etapa 6 — Documentación**: RUN_REPORT.md + RUN_REPORT.docx con
-   las 6 capturas de cada portal + walkthrough final.
+The flat, ordered task list is in
+[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md). Each task lists the
+exact command(s), the expected output, and an explanation. The same
+tasks are bundled in `bin/bootstrap.sh` (one-shot) and `Makefile`
+(thin wrapper).
 
-Cada día termina con un walkthrough reproducible desde cero
-(`docker compose down -v && ... up -d --build && ...`) y screenshots.
+## 9. How to approve / change
 
-## 9. Cómo aprobar / cambiar
+If something does not add up, the fastest path is:
 
-Si algo no cierra, lo más rápido es:
+- **Edit this file** (sections 2, 3, and 5 are the ones most likely
+  to change).
+- Restart the review cycle.
 
-- **Editar este archivo** (las secciones 2, 3, 5 son las que más
-  probablemente cambien).
-- Re-empezar el ciclo de revisión.
-
-Cuando esté firmado, mover a `docs/design-final.md` y arrancar fase 3.
+Once signed off, the design is treated as the source of truth for any
+follow-up work.
