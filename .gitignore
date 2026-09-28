@@ -22,3 +22,6 @@ minio-data/
 /tmp-*
 # Backup of real .env (gitignored for safety)
 .env.example.backup
+
+# Python cache for the helper scripts
+bin/__pycache__/

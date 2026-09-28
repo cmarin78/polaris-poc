@@ -222,7 +222,26 @@ on the bucket side.
 
 ### Day 6 — RUN_REPORT (this file), screenshots, push to public repos
 
-Captures: see `docs/screenshots/` (TBD) and this document.
+Captures: 6 screenshots in `docs/screenshots/`, all driven by
+`tests/capture_screenshots.py` (Playwright headless + chromium
+`--host-rules=MAP keycloak 192.168.32.4` so the browser can reach
+the Keycloak container over the docker bridge from the test host).
+
+| File                                   | What it proves                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `01-intranet-directory-alice.png`      | Intranet /directory renders the 5 seeded employees for `alice` (employee, pol-eng).     |
+| `02-grafana-home-carol-admin.png`      | Grafana post-auth home for `carol` — avatar in the top right confirms OIDC worked.      |
+| `03-customer-home-alice-acme.png`      | Customer home for `alice-acme` shows `tenant: acme` tag, links to /data and /files.     |
+| `04-customer-data-alice-acme-acme-only.png` | `customer_data` for tenant acme only (2 rows); SQL shows `SET LOCAL app.current_tenant_id = '1'`. |
+| `05-customer-files-alice-acme.png`     | MinIO STS AssumeRoleWithWebIdentity returns temporary creds; bucket `pol-data-acme` lists `README.md` (285 B). |
+| `06-customer-data-alice-403-no-tenant.png` | `alice` (employee, no tenant group) hits 403 — RLS rejects her JWT with `groups=['pol-employees', 'pol-eng']`. |
+
+The capture script clears the Playwright cookie jar between portal
+runs (`ctx.clear_cookies()`) so the realm-level Keycloak SSO session
+from `alice`'s intranet login does not auto-bridge her into the
+customer pod when we then log in as `alice-acme`. Combined with
+`prompt=login` on both /login handlers, every portal run forces the
+full login form.
 
 ## 4. File map
 
@@ -383,6 +402,36 @@ python3 tests/test_grafana_role.py carol polaris
    declared in `tagOwners`**, even when the tag maps from an OIDC
    claim rather than a preauth key. (Pre-auth ACLs would have caught
    this, but we're using database mode for the POC.)
+6. **Flask session cookies signed with a shared key across pods
+   decrypt on both pods.** Both portals shipped with the same
+   `FLASK_SECRET` placeholder, so the intranet's signed cookie
+   decrypted on the customer pod — the customer then rendered
+   `Welcome alice.` even though alice had only ever logged into
+   the intranet. Fixed with per-pod secrets
+   (`polaris-poc-intranet-secret-CHANGE_ME` vs
+   `polaris-poc-customer-secret-CHANGE_ME`).
+7. **Keycloak SSO bridges users at the realm level, not the client
+   level.** Once alice authenticated against the intranet, Keycloak
+   had a session for her in the polaris realm. The customer pod
+   redirected to Keycloak, Keycloak auto-logged-in alice
+   (with `prompt=login` even pre-filling the username field so
+   only the password was visible), and the customer pod ended up
+   authenticated as alice. Fixed with `prompt=login` on the
+   /login authorize URL AND `ctx.clear_cookies()` between
+   captures in the screenshot test. The production answer is
+   per-portal OIDC clients — flagged as TODO.
+8. **Grafana's `appUrl` is baked into the Docker image**, so even
+   setting `GF_AUTH_GENERIC_OAUTH_AUTH_URL` etc. doesn't change the
+   redirect_uri Grafana sends to Keycloak. Without
+   `GF_SERVER_ROOT_URL=http://127.0.0.1:13001`, Grafana would
+   302-redirect to `http://grafana.polaris.ts.net/login/generic_oauth`
+   — which doesn't resolve on the test host.
+9. **Grafana's `generic_oauth` doesn't implement PKCE**, so any
+   client in Keycloak with `pkce.code.challenge.method` enforced
+   rejects the authorize call with `Missing parameter:
+   code_challenge_method`. Workaround: leave PKCE off for the
+   Grafana client only. The intranet and customer pods were
+   updated to send PKCE.
 
 ## Appendix A — sample end-to-end output
 

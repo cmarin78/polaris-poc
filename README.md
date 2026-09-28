@@ -141,7 +141,7 @@ polaris/
 ├── docs/
 │   ├── design.md               ← 545 lines, source of truth
 │   ├── diagrams/{architecture,iam-flow,idp-flow,tag-matrix}.mmd
-│   └── screenshots/             ← (TBD)
+│   └── screenshots/             ← 6 PNGs: intranet, Grafana, customer (×4)
 ├── k3d/
 │   ├── cluster.yaml            ← kind cluster config
 │   ├── traefik.yaml            ← Traefik ingress
