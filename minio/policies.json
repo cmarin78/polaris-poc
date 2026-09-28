@@ -1,0 +1,125 @@
+{
+  "_comment": [
+    "polaris POC — MinIO IAM policies. Each policy maps a Keycloak `groups`",
+    "claim value to a MinIO policy. When a user authenticates to MinIO via",
+    "OIDC (Keycloak), MinIO extracts the `groups` claim and applies the",
+    "matching policy.",
+    "",
+    "Group -> Policy mapping:",
+    "  pol-employees                 -> pol-data-employees-readwrite",
+    "  pol-ops                       -> pol-data-ops-admin",
+    "  pol-admin                     -> (all 5, via inline assignment)",
+    "  pol-customer-tenant-acme      -> pol-data-acme-readwrite",
+    "  pol-customer-tenant-brightside-> pol-data-brightside-readwrite",
+    "  pol-partners-northwind        -> pol-data-partners-readonly"
+  ],
+  "policies": {
+    "pol-data-employees-readwrite": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetBucketLocation",
+            "s3:ListBucket",
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+            "s3:GetObjectVersion"
+          ],
+          "Resource": [
+            "arn:aws:s3:::pol-data-employees",
+            "arn:aws:s3:::pol-data-employees/*"
+          ]
+        }
+      ]
+    },
+    "pol-data-ops-admin": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": ["s3:*"],
+          "Resource": [
+            "arn:aws:s3:::pol-data-ops",
+            "arn:aws:s3:::pol-data-ops/*"
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": ["s3:ListBucket"],
+          "Resource": ["arn:aws:s3:::*"]
+        }
+      ]
+    },
+    "pol-data-acme-readwrite": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetBucketLocation",
+            "s3:ListBucket",
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject"
+          ],
+          "Resource": [
+            "arn:aws:s3:::pol-data-acme",
+            "arn:aws:s3:::pol-data-acme/*"
+          ]
+        }
+      ]
+    },
+    "pol-data-brightside-readwrite": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetBucketLocation",
+            "s3:ListBucket",
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject"
+          ],
+          "Resource": [
+            "arn:aws:s3:::pol-data-brightside",
+            "arn:aws:s3:::pol-data-brightside/*"
+          ]
+        }
+      ]
+    },
+    "pol-data-partners-readonly": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetBucketLocation",
+            "s3:ListBucket",
+            "s3:GetObject"
+          ],
+          "Resource": [
+            "arn:aws:s3:::pol-data-partners",
+            "arn:aws:s3:::pol-data-partners/*"
+          ]
+        }
+      ]
+    }
+  },
+  "group_policy_mapping": {
+    "pol-employees":                 ["pol-data-employees-readwrite"],
+    "pol-ops":                       ["pol-data-ops-admin"],
+    "pol-admin":                     [
+      "pol-data-employees-readwrite",
+      "pol-data-ops-admin",
+      "pol-data-acme-readwrite",
+      "pol-data-brightside-readwrite",
+      "pol-data-partners-readonly"
+    ],
+    "pol-customer-tenant-acme":      ["pol-data-acme-readwrite"],
+    "pol-customer-tenant-brightside": ["pol-data-brightside-readwrite"],
+    "pol-partners-northwind":        ["pol-data-partners-readonly"]
+  }
+}

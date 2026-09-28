@@ -1,0 +1,54 @@
+# polaris POC — Headscale control plane config
+#
+# Same schema as headscaletest-poc/config.yaml (v0.29.4). MagicDNS base
+# domain is polaris.ts.net so it doesn't collide with the other POC.
+
+server_url: http://host.docker.internal:28080
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+dns:
+  base_domain: polaris.ts.net
+  magic_dns: true
+  nameservers.global:
+    - 1.1.1.1
+    - 8.8.8.8
+
+derp:
+  server:
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+
+# SQLite is enough for a POC.
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+private_key_path: /var/lib/headscale/private.key
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+# Policy is stored in the database so we can update it with `headscale policy set`.
+policy:
+  mode: database
+  path: ""
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
+node:
+  ephemeral:
+    inactivity_timeout: 30m
+
+log:
+  level: info
+  format: text

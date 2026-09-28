@@ -1,0 +1,122 @@
+# polaris POC — Customer portal deployment.
+#
+# Run with:
+#   kind load docker-image polaris-customer:latest --name polaris-eks-sim
+#   kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer
+  namespace: pol-customer
+  labels:
+    app: customer
+    tier: portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer
+  template:
+    metadata:
+      labels:
+        app: customer
+    spec:
+      containers:
+        - name: customer
+          image: polaris-customer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: KEYCLOAK_ISSUER
+              value: "http://keycloak:8080/realms/polaris"
+            - name: KEYCLOAK_CLIENT_ID
+              value: "pol-intranet"
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "pol_customer"
+            - name: POSTGRES_USER
+              value: "polaris_app"
+            - name: POSTGRES_PASSWORD
+              value: "polaris"
+            - name: MINIO_ENDPOINT
+              value: "http://minio:9000"
+            - name: PUBLIC_URL
+              value: "http://customer.polaris.ts.net"
+            - name: FLASK_SECRET
+              value: "polaris-poc-flask-secret-CHANGE_ME"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer
+  namespace: pol-customer
+  labels:
+    app: customer
+spec:
+  type: ClusterIP
+  selector:
+    app: customer
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: customer
+  namespace: pol-customer
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: customer.polaris.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: customer
+                port:
+                  number: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-nodeport
+  namespace: pol-customer
+spec:
+  type: NodePort
+  selector:
+    app: customer
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30083

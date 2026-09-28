@@ -1,0 +1,27 @@
+# polaris POC — kind cluster config
+#
+# Originally planned k3d, but the k3d-tools image from ghcr.io can't be
+# pulled on this host. kind is already installed and the same image
+# (kindest/node:v1.30.0) is cached locally.
+#
+# 1 control-plane + 1 worker. Host port mappings:
+#   - 6443 inside the container, NOT exposed to host (we use
+#     `docker exec` into the container for kubectl access, or `kubectl
+#     port-forward` from inside the container)
+#   - 80 inside the container, NOT exposed (we use NodePort 30080 from
+#     the worker node, or kubectl port-forward for ingress testing)
+#
+# We don't use extraPortMappings because of the host port allocator
+# issue on this box (every port we tried reported "already allocated"
+# even when `ss -tln` showed nothing). For ingress access, we use
+# kubectl port-forward from the host.
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: polaris-eks-sim
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.30.0
+  - role: worker
+    image: kindest/node:v1.30.0

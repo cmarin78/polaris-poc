@@ -1,0 +1,171 @@
+# polaris POC — Day 1 base stack
+#
+# Components:
+#   - keycloak    (OIDC IDP, port 8081)
+#   - postgres    (RDS sim, port 5433 because 5432 is taken by system postgres)
+#   - minio       (S3-compatible storage with IAM, ports 9000/9001)
+#   - headscale   (Tailscale control plane, port 28080)
+#
+# Day 2-5 will add k3d cluster with the 3 portals on top of this base.
+
+version: "3.8"
+
+networks:
+  polaris_default:
+    driver: bridge
+
+volumes:
+  polaris_keycloak_data:
+  polaris_postgres_data:
+  polaris_minio_data:
+  polaris_headscale_data:
+
+services:
+
+  # ===================== Headscale control plane =====================
+  headscale:
+    image: headscale/headscale:stable
+    container_name: polaris-poc-headscale-1
+    hostname: headscale
+    restart: unless-stopped
+    command: serve
+    environment:
+      TZ: UTC
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - polaris_headscale_data:/var/lib/headscale
+    ports:
+      - "28080:8080"   # API + Noise; host runs the CLI against this
+    healthcheck:
+      test: ["CMD", "/ko-app/headscale", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - polaris_default
+
+  # ===================== Postgres (RDS sim) =====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: polaris-poc-postgres-1
+    hostname: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-polaris}
+      POSTGRES_USER: ${POSTGRES_USER:-polaris_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-polaris}
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - polaris_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # 5432 is taken by system postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-polaris_admin}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - polaris_default
+
+  # ===================== Keycloak (OIDC IDP) =====================
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: polaris-poc-keycloak-1
+    hostname: keycloak
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-polaris}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /
+    volumes:
+      - ./keycloak/realm-polaris.json:/opt/keycloak/data/import/realm-polaris.json:ro
+      - polaris_keycloak_data:/opt/keycloak/data
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/keycloak/bin/kc.sh --help >/dev/null 2>&1 && (echo > /dev/tcp/localhost/8080) >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - polaris_default
+
+  # ===================== MinIO (S3 sim) =====================
+  minio:
+    # NOTE: we use an older MinIO tag (RELEASE.2024-01-18) because the open-source
+    # MinIO project was archived in 2026 and dl.min.io no longer serves new
+    # releases. The cached image on this host still works for the POC.
+    image: quay.io/minio/minio:RELEASE.2024-01-18T22-51-28Z
+    container_name: polaris-poc-minio-1
+    hostname: minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-polaris_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-polaris123}
+      # OIDC integration with Keycloak: claim "groups" drives policy mapping.
+      # claim_prefix="" so the group names come through as-is (no "/realm/" prefix).
+      # Keycloak listens on internal port 8080 (host maps 8081 -> 8080).
+      MINIO_IDENTITY_OPENID_CONFIG_URL: http://keycloak:8080/realms/polaris/.well-known/openid-configuration
+      # Use pol-intranet (the OIDC client the portals log in with) as the
+      # client_id MinIO expects in the JWT `aud` claim. We do NOT set a
+      # client_secret — MinIO falls back to RSA signature verification
+      # against the JWKS keys advertised in Keycloak's discovery doc
+      # (see minio/internal/config/identity/openid/jwt.go).
+      MINIO_IDENTITY_OPENID_CLIENT_ID: pol-intranet
+      MINIO_IDENTITY_OPENID_CLIENT_SECRET: ""
+      MINIO_IDENTITY_OPENID_CLAIM_NAME: groups
+      MINIO_IDENTITY_OPENID_CLAIM_PREFIX: ""
+      MINIO_IDENTITY_OPENID_SCOPES: "openid,groups"
+      MINIO_IDENTITY_OPENID_REDIRECT_URI: http://localhost:9001/oauth_callback
+      # NOTE: MINIO_IDENTITY_OPENID_ROLE_POLICY cannot be set together with
+      # a non-default CLAIM_NAME (we use `groups`). MinIO's openid loader
+      # rejects the combination:
+      #   "Role Policy (...) and Claim Name (=`groups`) cannot both be set"
+      # The claim-based path uses the JWT `groups` value directly as the
+      # policy name lookup — no RoleArn required in the STS call.
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - polaris_minio_data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO console
+    healthcheck:
+      # MinIO is distroless — no curl/wget. TCP-connection check via /dev/tcp from sh.
+      test: ["CMD-SHELL", "(exec 3<>/dev/tcp/localhost/9000) >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - polaris_default
+
+  # ===================== MinIO setup (init container pattern) =====================
+  # This one-shot container waits for minio to be healthy, then creates the
+  # 5 buckets and uploads a seed README to each. Uses boto3 (no mc needed —
+  # MinIO community archives are no longer downloadable as of 2026).
+  minio-bootstrap:
+    image: polaris-minio-bootstrap:latest
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.minio-bootstrap
+    container_name: polaris-poc-minio-bootstrap
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-polaris_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-polaris123}
+    networks:
+      - polaris_default
+    restart: "no"

@@ -1,0 +1,249 @@
+{
+  "realm": "polaris",
+  "enabled": true,
+  "displayName": "Polaris",
+  "accessTokenLifespan": 3600,
+  "accessTokenLifespanForImplicitFlow": 3600,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "eventsEnabled": true,
+  "eventsExpiration": 36000,
+  "adminEventsEnabled": false,
+  "adminEventsDetailsEnabled": false,
+  "enabledEventTypes": [
+    "LOGIN", "LOGOUT", "REGISTER", "UPDATE_EMAIL", "UPDATE_PASSWORD",
+    "LOGIN_ERROR", "TOKEN_EXCHANGE", "CLIENT_LOGIN", "CLIENT_LOGIN_ERROR",
+    "IDENTITY_PROVIDER_LOGIN", "CODE_TO_TOKEN", "CODE_TO_TOKEN_ERROR"
+  ],
+  "internationalizationEnabled": false,
+  "defaultLocale": "en",
+  "roles": {
+    "realm": [
+      { "name": "default-roles-polaris", "description": "Default role for all users" }
+    ]
+  },
+  "groups": [
+    { "name": "pol-employees", "path": "/pol-employees" },
+    { "name": "pol-eng",       "path": "/pol-eng" },
+    { "name": "pol-ops",       "path": "/pol-ops" },
+    { "name": "pol-admin",     "path": "/pol-admin" },
+    { "name": "pol-customer-tenant-acme",       "path": "/pol-customer-tenant-acme" },
+    { "name": "pol-customer-tenant-brightside", "path": "/pol-customer-tenant-brightside" },
+    { "name": "pol-partners-northwind",         "path": "/pol-partners-northwind" }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@polaris.example",
+      "firstName": "Alice",
+      "lastName": "Polaris-Eng",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "polaris", "temporary": false }
+      ],
+      "groups": ["pol-employees", "pol-eng"]
+    },
+    {
+      "username": "bob",
+      "email": "bob@polaris.example",
+      "firstName": "Bob",
+      "lastName": "Polaris-Ops",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "polaris", "temporary": false }
+      ],
+      "groups": ["pol-employees", "pol-ops"]
+    },
+    {
+      "username": "carol",
+      "email": "carol@polaris.example",
+      "firstName": "Carol",
+      "lastName": "Polaris-Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "polaris", "temporary": false }
+      ],
+      "groups": ["pol-employees", "pol-admin"]
+    },
+    {
+      "username": "alice-acme",
+      "email": "ext.alice@acme.example",
+      "firstName": "Alice (Acme)",
+      "lastName": "External",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "polaris", "temporary": false }
+      ],
+      "groups": ["pol-customer-tenant-acme"]
+    },
+    {
+      "username": "bob-brightside",
+      "email": "ext.bob@brightside.example",
+      "firstName": "Bob (Brightside)",
+      "lastName": "External",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "polaris", "temporary": false }
+      ],
+      "groups": ["pol-customer-tenant-brightside"]
+    },
+    {
+      "username": "carol-northwind",
+      "email": "ext.carol@northwind.example",
+      "firstName": "Carol (Northwind)",
+      "lastName": "Partner",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "polaris", "temporary": false }
+      ],
+      "groups": ["pol-partners-northwind"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "pol-intranet",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://intranet.polaris.ts.net/*", "http://customer.polaris.ts.net/*", "http://localhost:3000/*", "http://localhost:13000/*", "http://localhost:13002/*"],
+      "webOrigins": ["*"],
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-self",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "pol-intranet",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "pol-grafana",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://grafana.polaris.ts.net/*", "http://intranet.polaris.ts.net/*", "http://customer.polaris.ts.net/*", "http://localhost:3000/*", "http://localhost:13001/*"],
+      "webOrigins": ["*"],
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "pol-customer",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://customer.polaris.ts.net/*", "http://localhost:3000/*"],
+      "webOrigins": ["*"],
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "pol-minio",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "minio-oidc-secret-CHANGE_ME",
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "token.introspection": "true"
+      }
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "groups",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "user.attribute": "email",
+            "claim.name": "email"
+          }
+        }
+      ]
+    },
+    {
+      "name": "username",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "user.attribute": "username",
+            "claim.name": "preferred_username"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": ["groups", "email", "username", "openid", "profile"]
+}

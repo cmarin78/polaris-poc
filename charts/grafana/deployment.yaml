@@ -1,0 +1,127 @@
+# polaris POC — Grafana portal deployment.
+#
+# Run with:
+#   kind load docker-image polaris-grafana:latest --name polaris-eks-sim
+#   kubectl --context=kind-polaris-eks-sim apply -f charts/grafana/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: pol-grafana
+  labels:
+    app: grafana
+    tier: portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: polaris-grafana:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "polaris"
+            - name: GF_AUTH_GENERIC_OAUTH_CLIENT_ID
+              value: "pol-grafana"
+            # Public client — no secret. Grafana uses the Keycloak discovery
+            # doc advertised at GF_AUTH_GENERIC_OAUTH_AUTH_URL to figure out
+            # JWKS for RS256 verification.
+            - name: GF_AUTH_GENERIC_OAUTH_AUTH_URL
+              value: "http://keycloak:8080/realms/polaris/protocol/openid-connect/auth"
+            - name: GF_AUTH_GENERIC_OAUTH_TOKEN_URL
+              value: "http://keycloak:8080/realms/polaris/protocol/openid-connect/token"
+            - name: GF_AUTH_GENERIC_OAUTH_API_URL
+              value: "http://keycloak:8080/realms/polaris/protocol/openid-connect/userinfo"
+            - name: GF_AUTH_GENERIC_OAUTH_ENABLED
+              value: "true"
+            - name: GF_AUTH_GENERIC_OAUTH_NAME
+              value: "Keycloak"
+            - name: GF_AUTH_GENERIC_OAUTH_SCOPES
+              value: "openid email"
+            - name: GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH
+              value: "contains(groups[*], 'pol-admin') && 'Admin' || contains(groups[*], 'pol-ops') && 'Editor' || 'Viewer'"
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: pol-grafana
+  labels:
+    app: grafana
+spec:
+  type: ClusterIP
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: pol-grafana
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: grafana.polaris.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-nodeport
+  namespace: pol-grafana
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30082

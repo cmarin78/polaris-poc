@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant Admin
+    participant KC as Keycloak<br/>(admin console)
+    participant U as User<br/>(browser + tailscale client)
+    participant TS as Headscale<br/>(control plane)
+    participant P as Portal<br/>(intranet/grafana/customer)
+
+    Note over Admin,KC: Day 0: admin setup
+    Admin->>KC: create realm `polaris`
+    Admin->>KC: create groups (pol-employees, pol-ops, ...)
+    Admin->>KC: create OIDC clients (pol-intranet, pol-grafana, pol-customer)
+    Admin->>KC: create user alice@polaris.example<br/>assign group pol-employees
+
+    Note over U,P: Day 1: user logs in
+    U->>TS: tailscale login (SSO via pol-tailscale client)
+    TS->>KC: OIDC request (groups claim)
+    KC-->>TS: groups=[pol-employees]
+    Note over TS: admin/script:<br/>headscale nodes tag<br/>--identifier=alice@...<br/>--tags='tag:pol-employees'
+
+    U->>P: open intranet.polaris.ts.net
+    P->>KC: OIDC login flow
+    KC-->>U: JWT with groups claim
+    U->>P: retry with JWT
+    P-->>U: page rendered (filtered by group)
+
+    Note over P: Policy check:<br/>groups=[pol-employees]<br/>→ ACL: tag:pol-employees has dst :80<br/>→ allow

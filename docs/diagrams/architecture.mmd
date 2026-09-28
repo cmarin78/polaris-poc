@@ -1,0 +1,62 @@
+flowchart TB
+    subgraph Internet["Internet"]
+        User[External user]
+    end
+
+    subgraph Host["Host (single machine)"]
+        direction TB
+
+        Proxy["Reverse proxy<br/>traefik :8080"]
+
+        subgraph K3D["k3d cluster polaris-eks-sim"]
+            direction TB
+
+            subgraph NS1["ns: pol-intranet"]
+                Intranet["Intranet pod<br/>Flask :3000<br/>+ tailscale sidecar<br/>tag:pol-intranet"]
+            end
+
+            subgraph NS2["ns: pol-grafana"]
+                Grafana["Grafana pod<br/>10.x :3000<br/>+ tailscale sidecar<br/>tag:pol-grafana"]
+            end
+
+            subgraph NS3["ns: pol-customer"]
+                Customer["Customer portal pod<br/>Flask :3000<br/>+ tailscale sidecar<br/>tag:pol-customer-{tenant}"]
+            end
+
+            subgraph NS4["ns: pol-storage"]
+                MinIO["MinIO pod<br/>S3-compatible :9000<br/>+ console :9001<br/>+ tailscale sidecar<br/>tag:pol-minio"]
+                MinIOBuckets[/"5 buckets:<br/>pol-data-employees<br/>pol-data-ops<br/>pol-data-acme<br/>pol-data-brightside<br/>pol-data-partners"/]
+            end
+        end
+
+        Headscale["Headscale<br/>control plane<br/>:8080"]
+
+        Keycloak["Keycloak<br/>:8081<br/>realm: polaris<br/>+ OIDC clients:<br/>pol-intranet, pol-grafana,<br/>pol-customer, pol-minio"]
+
+        Postgres["Postgres<br/>:5432<br/>pol_intranet<br/>pol_grafana<br/>pol_customer"]
+    end
+
+    User -->|HTTPS| Proxy
+    Proxy -->|host: intranet.polaris.ts.net| Intranet
+    Proxy -->|host: grafana.polaris.ts.net| Grafana
+    Proxy -->|host: customer.polaris.ts.net| Customer
+
+    Intranet -.OIDC.-> Keycloak
+    Grafana -.OIDC.-> Keycloak
+    Customer -.OIDC.-> Keycloak
+
+    Intranet --> Postgres
+    Grafana --> Postgres
+    Customer --> Postgres
+
+    Intranet -.WG mesh.-> Headscale
+    Grafana -.WG mesh.-> Headscale
+    Customer -.WG mesh.-> Headscale
+    MinIO -.WG mesh.-> Headscale
+
+    Intranet -.STS / S3 API.-> MinIO
+    Customer -.STS / S3 API.-> MinIO
+    MinIO -.OIDC validate.-> Keycloak
+    MinIO --- MinIOBuckets
+
+    Keycloak -.OIDC claims.-> Headscale

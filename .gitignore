@@ -1,0 +1,24 @@
+# local secrets — never commit
+.env
+*.env.local
+minio_bootstrap/__pycache__/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# MinIO local data (mounted volume contents; never committed)
+minio-data/
+
+# Generated artifacts
+*.log
+/tmp-*
+# Backup of real .env (gitignored for safety)
+.env.example.backup

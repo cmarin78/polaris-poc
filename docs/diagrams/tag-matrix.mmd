@@ -1,0 +1,43 @@
+flowchart LR
+    subgraph KC["Keycloak groups"]
+        G1[pol-employees]
+        G2[pol-eng]
+        G3[pol-ops]
+        G4[pol-admin]
+        G5[pol-customer-tenant-acme]
+        G6[pol-customer-tenant-brightside]
+        G7[pol-partners-northwind]
+    end
+
+    subgraph TS["Tailscale tags"]
+        T1[tag:pol-employees]
+        T2[tag:pol-eng]
+        T3[tag:pol-ops]
+        T4[tag:pol-admin]
+        T5[tag:pol-customer-acme]
+        T6[tag:pol-customer-brightside]
+        T7[tag:pol-partners-northwind]
+    end
+
+    subgraph ACL["ACL policy.hujson"]
+        A1[intranet:80]
+        A2[grafana:80]
+        A3[grafana:80 write]
+        A4[k3d bastion:22]
+        A5[customer portal Acme + DB Acme]
+        A6[customer portal Brightside + DB Brightside]
+        A7[customer portal Partners]
+        A8[all]
+    end
+
+    G1 --> T1 --> A1
+    G1 --> T1 --> A2
+    G2 --> T2 --> A1
+    G2 --> T2 --> A4
+    G3 --> T3 --> A2
+    G3 --> T3 --> A3
+    G3 --> T3 --> A4
+    G4 --> T4 --> A8
+    G5 --> T5 --> A5
+    G6 --> T6 --> A6
+    G7 --> T7 --> A7

@@ -1,0 +1,21 @@
+apiVersion: 1
+
+datasources:
+  - name: polaris-postgres
+    type: postgres
+    uid: polaris-pg
+    access: proxy
+    url: postgres:5432
+    user: polaris_admin
+    secureJsonData:
+      password: polaris
+    jsonData:
+      database: pol_grafana
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 600
+      postgresVersion: 1600
+      timescaledb: false
+    editable: false
+    readOnly: false

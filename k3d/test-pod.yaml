@@ -1,0 +1,37 @@
+# polaris POC — test pod manifest for verifying kind -> polaris stack connectivity.
+#
+# Run with: kubectl apply -f k3d/test-pod.yaml --context=kind-polaris-eks-sim
+# Get logs:  kubectl logs test-connect --context=kind-polaris-eks-sim
+#
+# DNS resolution works because the kind control-plane + worker
+# containers are connected to the polaris_polaris_default docker
+# network (see notes/k3d.md).
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-connect
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+    - name: netshoot
+      image: nicolaka/netshoot:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          # Use bash for /dev/tcp. The base netshoot image has bash.
+          bash -c '
+          echo "=== ping headscale:8080 (control plane, internal port) ==="
+          wget -qO- --timeout=3 http://headscale:8080/health
+          echo
+          echo "=== ping keycloak:8080 (OIDC IDP, internal port) ==="
+          wget -qO- --timeout=3 http://keycloak:8080/realms/polaris 2>&1 | head -1 | python3 -c "import json,sys; line=sys.stdin.read(); print(f\"realm: {json.loads(line)[\"realm\"]}\")" 2>&1
+          echo
+          echo "=== ping minio:9000 (S3 API, internal port) ==="
+          exec 3<>/dev/tcp/minio/9000 && echo "minio port reachable" || echo "minio port NOT reachable"
+          echo "=== ping postgres:5432 (RDS sim, internal port) ==="
+          exec 3<>/dev/tcp/postgres/5432 && echo "postgres port reachable" || echo "postgres port NOT reachable"
+          echo "=== done ==="
+          sleep 30
+          '

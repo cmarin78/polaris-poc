@@ -1,0 +1,106 @@
+// ACL policy for the polaris POC.
+//
+// Two layers of defense:
+//   1. Tailscale ACL (this file) decides which sidecars can talk to which
+//      sidecars on which ports.
+//   2. MinIO IAM (minio/policies.json + bucket policies) decides which
+//      user (identified via Keycloak `groups` claim) can read/write which
+//      bucket.
+//
+// The Tailscale tag group convention here mirrors Keycloak realm groups:
+//   tag:pol-employees             <-> group:pol-employees
+//   tag:pol-eng                   <-> group:pol-eng
+//   tag:pol-ops                   <-> group:pol-ops
+//   tag:pol-admin                 <-> group:pol-admin
+//   tag:pol-customer-acme         <-> group:pol-customer-tenant-acme
+//   tag:pol-customer-brightside   <-> group:pol-customer-tenant-brightside
+//   tag:pol-partners-northwind    <-> group:pol-partners-northwind
+//   tag:pol-minio                 <-> (service account, not user-mapped)
+//
+// Headscale-specific quirks (same as headscaletest-poc):
+//   - tagOwners require user:<name>@ form (trailing @ is the validation marker)
+//   - `autogroup:admin` does not exist in headscale
+//   - `autogroup:nonroot` is not supported either (use literal users)
+
+{
+  "tagOwners": {
+    "tag:pol-intranet":            ["user:polaris@"],
+    "tag:pol-grafana":             ["user:polaris@"],
+    "tag:pol-customer-acme":       ["user:polaris@"],
+    "tag:pol-customer-brightside": ["user:polaris@"],
+    "tag:pol-partners-northwind":  ["user:polaris@"],
+    "tag:pol-minio":               ["user:polaris@"],
+    "tag:pol-employees":           ["user:polaris@"],
+    "tag:pol-eng":                 ["user:polaris@"],
+    "tag:pol-ops":                 ["user:polaris@"],
+    "tag:pol-admin":               ["user:polaris@"]
+  },
+  "acls": [
+    // Empleados pueden leer intranet y grafana
+    {
+      "action": "accept",
+      "src":    ["tag:pol-employees"],
+      "dst":    ["tag:pol-intranet:80", "tag:pol-grafana:80"]
+    },
+    // Empleados pueden hablar con MinIO (la IAM decide qué bucket)
+    {
+      "action": "accept",
+      "src":    ["tag:pol-employees"],
+      "dst":    ["tag:pol-minio:9000"]
+    },
+    // Ops tiene write en grafana y admin en MinIO
+    {
+      "action": "accept",
+      "src":    ["tag:pol-ops"],
+      "dst":    ["tag:pol-grafana:80", "tag:pol-minio:9000"]
+    },
+    // B2B customer Acme: solo portal Acme + MinIO (su bucket via IAM)
+    {
+      "action": "accept",
+      "src":    ["tag:pol-customer-acme"],
+      "dst":    ["tag:pol-intranet:80", "tag:pol-minio:9000"]
+    },
+    // B2B customer Brightside: solo portal Brightside + MinIO
+    {
+      "action": "accept",
+      "src":    ["tag:pol-customer-brightside"],
+      "dst":    ["tag:pol-intranet:80", "tag:pol-minio:9000"]
+    },
+    // Partner Northwind: solo portal Partners + MinIO (read-only via IAM)
+    {
+      "action": "accept",
+      "src":    ["tag:pol-partners-northwind"],
+      "dst":    ["tag:pol-intranet:80", "tag:pol-minio:9000"]
+    },
+    // Admin tiene acceso a todo (incluyendo MinIO console :9001)
+    {
+      "action": "accept",
+      "src":    ["tag:pol-admin"],
+      "dst": [
+        "tag:pol-intranet:80", "tag:pol-grafana:80",
+        "tag:pol-customer-acme:80", "tag:pol-customer-brightside:80",
+        "tag:pol-partners-northwind:80",
+        "tag:pol-minio:9000", "tag:pol-minio:9001",
+        "tag:pol-eng:22"
+      ]
+    },
+    // Los sidecars de servicio (intranet, grafana, customer, minio) no se
+    // hablan entre sí en este POC — la interacción es via Postgres y
+    // MinIO, no peer-to-peer. Si más adelante hace falta, agregar:
+    // { "src": ["tag:pol-intranet"], "dst": ["tag:pol-minio:9000"] }
+    {
+      "action": "accept",
+      "src":    ["tag:pol-intranet", "tag:pol-grafana", "tag:pol-minio"],
+      "dst":    ["tag:pol-minio:9000"]
+    }
+  ],
+  "ssh": [
+    // Ops puede SSH bastion para debug k3d nodes (futuro)
+    {
+      "action": "accept",
+      "src":    ["tag:pol-ops", "tag:pol-admin"],
+      "dst":    ["tag:pol-eng"],
+      "users":  ["root"]
+    }
+  ]
+}

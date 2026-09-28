@@ -1,0 +1,36 @@
+sequenceDiagram
+    participant U as User<br/>(browser)
+    participant P as Portal<br/>(intranet/customer)
+    participant KC as Keycloak
+    participant M as MinIO
+    participant S3 as S3 bucket
+
+    Note over U,KC: 1. SSO login (already done in intranet flow)
+    U->>P: GET /files
+    P-->>U: 401 → redirect to OIDC
+    U->>KC: login (SSO)
+    KC-->>P: JWT (groups claim)
+
+    Note over P,M: 2. AssumeRoleWithWebIdentity (STS)
+    P->>M: AssumeRoleWithWebIdentity<br/>WebIdentityToken=<JWT><br/>RoleArn=arn:role
+    M->>KC: validate JWT signature
+    KC-->>M: ok
+    M->>M: extract groups claim
+    M->>M: map groups → MinIO policy<br/>(pol-employees → employees-rw)
+    M-->>P: STS AccessKey/SecretKey/Token<br/>(TTL=1h)
+
+    Note over P,S3: 3. Use STS creds to talk S3
+    P->>M: aws s3 ls s3://pol-data-employees/<br/>(signed with STS creds)
+    M->>M: check IAM policy<br/>(employees-rw grants read on pol-data-employees)
+    M->>M: check bucket policy
+    M-->>P: 200 OK with object list
+    P-->>U: HTML with file list
+
+    Note over U,S3: Alternative paths
+    U->>M: aws s3 cp s3://pol-data-acme/secret.txt<br/>(user has tag:pol-customer-acme)
+    M->>M: IAM policy pol-data-acme-rw ALLOWS<br/>bucket policy ALLOWS<br/>→ allow
+    M-->>U: 200 OK file content
+
+    U->>M: aws s3 cp s3://pol-data-brightside/<br/>(user has tag:pol-customer-acme)
+    M->>M: IAM policy pol-data-acme-rw DENIES<br/>→ deny
+    M-->>U: 403 Forbidden (AccessDenied)
