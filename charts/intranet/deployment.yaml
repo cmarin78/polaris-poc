@@ -55,6 +55,16 @@ spec:
               value: "polaris"
             - name: PUBLIC_URL
               value: "http://intranet.polaris.ts.net"
+            # Required so the Flask session cookie signature is stable
+            # across gunicorn workers (we run --workers 2). Without it,
+            # each worker generates a random secret and the /callback
+            # state/code_verifier don't survive the redirect.
+            #
+            # IMPORTANT: must be UNIQUE per pod. Both pods sharing the
+            # same secret means the signed session cookie from one pod
+            # is decryptable on the other (Keycloak SSO across portals).
+            - name: FLASK_SECRET
+              value: "polaris-poc-intranet-secret-CHANGE_ME"
           readinessProbe:
             httpGet:
               path: /healthz

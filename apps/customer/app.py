@@ -210,6 +210,13 @@ def login():
         "redirect_uri":  redirect_uri,
         "scope":         "openid email",
         "state":         state,
+        # Force re-auth at Keycloak every time so the SSO session
+        # from another portal (e.g. intranet alice) does NOT silently
+        # bridge us into this pod as that user. For a production
+        # multi-tenant setup the right answer is per-portal OIDC
+        # clients, but for this POC we keep one realm client and
+        # disable SSO across portals with `prompt=login`.
+        "prompt":        "login",
     }
     # Generate PKCE pair so the redirect_uri stays simple.
     import hashlib, base64

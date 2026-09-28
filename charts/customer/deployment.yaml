@@ -48,8 +48,12 @@ spec:
               value: "http://minio:9000"
             - name: PUBLIC_URL
               value: "http://customer.polaris.ts.net"
+            # Flask session signing key. Must be UNIQUE per pod —
+            # sharing it with the intranet pod lets the intranet's
+            # signed session cookie decrypt on the customer pod
+            # (Keycloak SSO would silently bridge users across portals).
             - name: FLASK_SECRET
-              value: "polaris-poc-flask-secret-CHANGE_ME"
+              value: "polaris-poc-customer-secret-CHANGE_ME"
           readinessProbe:
             httpGet:
               path: /healthz

@@ -126,35 +126,59 @@ def healthz():
 @app.route("/login")
 def login():
     state = secrets.token_urlsafe(16)
-    session["oidc_state"] = state
+    session["oauth_state"] = state
+    # Use the request's actual host (works for both the production
+    # hostname intranet.polaris.ts.net and for local port-forwarded
+    # testing on http://localhost:13000).
+    redirect_uri = f"{request.url_root.rstrip('/')}/callback"
+    session["redirect_uri"] = redirect_uri
     discovery = _kc_get_discovery()
     params = {
         "response_type": "code",
         "client_id": KEYCLOAK_CLIENT_ID,
-        "redirect_uri": url_for("callback", _external=True),
-        "scope": "openid profile email groups",
+        "redirect_uri": redirect_uri,
+        "scope": "openid email",
         "state": state,
+        # Force re-auth at Keycloak so SSO from another portal doesn't
+        # silently bridge users across pods (see customer app.py).
+        "prompt":        "login",
     }
+    # PKCE so the redirect_uri stays simple and Keycloak is happy.
+    import hashlib, base64
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    session["code_verifier"] = verifier
+    params["code_challenge"] = challenge
+    params["code_challenge_method"] = "S256"
     return redirect(f"{discovery['authorization_endpoint']}?{urlencode(params)}")
 
 
 @app.route("/callback")
 def callback():
+    if request.args.get("error"):
+        return f"OIDC error: {request.args['error']} - {request.args.get('error_description','')}", 400
+    if request.args.get("state") != session.pop("oauth_state", None):
+        return "state mismatch", 400
     code = request.args.get("code")
-    state = request.args.get("state")
-    if not code or not state or state != session.get("oidc_state"):
-        return "invalid state", 400
-    session.pop("oidc_state", None)
+    if not code:
+        return "missing code", 400
+    verifier = session.pop("code_verifier", None)
+    redirect_uri = session.pop("redirect_uri", url_for("callback", _external=True))
 
     discovery = _kc_get_discovery()
     # Exchange code for tokens
     import urllib.request
-    data = urlencode({
+    payload = {
         "grant_type": "authorization_code",
         "code": code,
         "client_id": KEYCLOAK_CLIENT_ID,
-        "redirect_uri": url_for("callback", _external=True),
-    }).encode()
+        "redirect_uri": redirect_uri,
+    }
+    if verifier:
+        payload["code_verifier"] = verifier
+    data = urlencode(payload).encode()
     token_req = urllib.request.Request(
         discovery["token_endpoint"], data=data, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"},

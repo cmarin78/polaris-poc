@@ -34,6 +34,15 @@ spec:
               value: "admin"
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: "polaris"
+            # Pin Grafana's appUrl/rootUrl so the OAuth redirect_uri
+            # matches what we registered in Keycloak for the local
+            # port-forwarded POC. Without this Grafana defaults to the
+            # `grafana.polaris.ts.net` hostname baked into the Docker
+            # image's build-time setting, which doesn't resolve on the
+            # test host. In a real deployment this would be the
+            # production hostname.
+            - name: GF_SERVER_ROOT_URL
+              value: "http://127.0.0.1:13001"
             - name: GF_AUTH_GENERIC_OAUTH_CLIENT_ID
               value: "pol-grafana"
             # Public client — no secret. Grafana uses the Keycloak discovery
