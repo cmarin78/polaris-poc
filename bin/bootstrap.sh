@@ -62,13 +62,15 @@ if ! kind get clusters 2>/dev/null | grep -q polaris-eks-sim; then
 else
   log "   kind cluster already exists, skipping create"
 fi
-NETWORK="${REPO_ROOT##*/}_polaris_default"
 NETWORK="polaris_polaris_default"  # docker-compose v2 namespacing
 for node in polaris-eks-sim-control-plane polaris-eks-sim-worker; do
-  if ! docker network inspect "$NETWORK" >/dev/null 2>&1 | grep -q "$node"; then
+  if docker network inspect "$NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null \
+       | grep -qw "$node"; then
+    log "   $node already connected to $NETWORK"
+  else
     log "   connect $node -> $NETWORK"
     docker network connect "$NETWORK" "$node" 2>/dev/null || \
-      warn "   $node already connected or network not found"
+      warn "   $node connect failed (network missing?)"
   fi
 done
 
@@ -134,8 +136,11 @@ cat <<EOF
   │    carol-northwind                      (partner)              │
   │                                                               │
   │  Verify:                                                      │
-  │    python3 tests/test_e2e.py                              │
+  │    python3 tests/test_intranet_files.py alice polaris         │
+  │    python3 tests/test_customer_data.py  alice-acme polaris    │
+  │    python3 tests/test_grafana_role.py   carol polaris          │
+  │    python3 tests/capture_screenshots.py                        │
   │                                                               │
-  │  See RUN_REPORT.md for the full day-by-day build log.         │
+  │  See RUN_REPORT.md for the POC narrative and findings.        │
   └───────────────────────────────────────────────────────────────┘
 EOF
