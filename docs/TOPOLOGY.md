@@ -84,9 +84,9 @@ flowchart TB
         Postgres["Postgres<br/>:5433<br/>pol_intranet<br/>pol_grafana<br/>pol_customer"]
     end
 
-    User -->|HTTPS<br/>intranet.polaris.ts.net| Proxy
-    User -->|HTTPS<br/>grafana.polaris.ts.net|   Proxy
-    User -->|HTTPS<br/>customer.polaris.ts.net|  Proxy
+    User -->|HTTPS intranet.polaris.ts.net| Proxy
+    User -->|HTTPS grafana.polaris.ts.net|   Proxy
+    User -->|HTTPS customer.polaris.ts.net|  Proxy
     Proxy --> Intranet
     Proxy --> Grafana
     Proxy --> Customer
@@ -378,14 +378,14 @@ flowchart LR
     end
 
     subgraph ACL["ACL destinations (this user can reach)"]
-        A1[intranet:80]
-        A2[grafana:80]
-        A3[grafana:80 (write)]
-        A4[bastion:22]
-        A5[customer + DB acme]
-        A6[customer + DB brightside]
-        A7[customer + DB partners]
-        A8[all destinations]
+        A1["intranet:80"]
+        A2["grafana:80"]
+        A3["grafana:80 write"]
+        A4["bastion:22"]
+        A5["customer + DB acme"]
+        A6["customer + DB brightside"]
+        A7["customer + DB partners"]
+        A8["all destinations"]
     end
 
     G1 --> T1 --> A1

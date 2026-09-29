@@ -10,7 +10,7 @@ datasources:
     secureJsonData:
       password: polaris
     jsonData:
-      database: pol_grafana
+      database: pol_customer
       sslmode: disable
       maxOpenConns: 5
       maxIdleConns: 2
