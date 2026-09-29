@@ -50,63 +50,63 @@ captured screenshots proves.
 
 ```mermaid
 flowchart TB
-    subgraph Internet["Internet / external network"]
-        User["User's browser<br/>+ tailscale client"]
-    end
+    Internet["Internet external network"]
+    User["User browser with tailscale client"]
+    Internet --> User
 
-    subgraph Host["Host (single Linux machine)"]
+    subgraph Host["Host single Linux machine"]
         direction TB
 
-        Proxy["Traefik ingress<br/>:8080 / :30443"]
+        Proxy["Traefik ingress - ports 8080 and 30443"]
 
-        subgraph Kind["kind cluster: polaris-eks-sim"]
+        subgraph Kind["kind cluster polaris-eks-sim"]
             direction TB
 
-            subgraph NS1["ns: pol-intranet"]
-                Intranet["intranet pod<br/>Flask :3000<br/>tag:pol-intranet"]
+            subgraph NS1["namespace pol-intranet"]
+                Intranet["intranet pod - Flask - port 3000 - tag pol-intranet"]
             end
 
-            subgraph NS2["ns: pol-grafana"]
-                Grafana["grafana pod<br/>:3000<br/>tag:pol-grafana"]
+            subgraph NS2["namespace pol-grafana"]
+                Grafana["grafana pod - port 3000 - tag pol-grafana"]
             end
 
-            subgraph NS3["ns: pol-customer"]
-                Customer["customer pod<br/>Flask :3000<br/>tag:pol-customer-{tenant}"]
+            subgraph NS3["namespace pol-customer"]
+                Customer["customer pod - Flask - port 3000 - tag pol-customer per-tenant"]
             end
 
-            subgraph NS4["ns: pol-storage"]
-                MinIO["MinIO pod<br/>S3 :9000 / console :9001<br/>tag:pol-minio"]
+            subgraph NS4["namespace pol-storage"]
+                MinIO["MinIO pod - S3 port 9000 - console port 9001 - tag pol-minio"]
             end
         end
 
-        Headscale["Headscale<br/>control plane<br/>:28080"]
-        Keycloak["Keycloak<br/>:8081<br/>realm: polaris"]
-        Postgres["Postgres<br/>:5433<br/>pol_intranet<br/>pol_grafana<br/>pol_customer"]
+        Headscale["Headscale control plane - port 28080"]
+        Keycloak["Keycloak - port 8081 - realm polaris"]
+        Postgres["Postgres - port 5433 - databases pol_intranet pol_grafana pol_customer"]
     end
 
     User -->|HTTPS intranet.polaris.ts.net| Proxy
-    User -->|HTTPS grafana.polaris.ts.net|   Proxy
-    User -->|HTTPS customer.polaris.ts.net|  Proxy
+    User -->|HTTPS grafana.polaris.ts.net| Proxy
+    User -->|HTTPS customer.polaris.ts.net| Proxy
     Proxy --> Intranet
     Proxy --> Grafana
     Proxy --> Customer
 
     Intranet -.OIDC.-> Keycloak
-    Grafana   -.OIDC.-> Keycloak
-    Customer  -.OIDC.-> Keycloak
+    Grafana -.OIDC.-> Keycloak
+    Customer -.OIDC.-> Keycloak
 
     Intranet --> Postgres
-    Grafana   --> Postgres
-    Customer  --> Postgres
+    Grafana --> Postgres
+    Customer --> Postgres
 
     Intranet -.WireGuard.-> Headscale
-    Grafana   -.WireGuard.-> Headscale
-    Customer  -.WireGuard.-> Headscale
-    MinIO     -.WireGuard.-> Headscale
+    Grafana -.WireGuard.-> Headscale
+    Customer -.WireGuard.-> Headscale
+    MinIO -.WireGuard.-> Headscale
 
     Intranet -.STS.-> MinIO
     Customer -.STS.-> MinIO
-    MinIO    -.OIDC validate.-> Keycloak
+    MinIO -.OIDC validate.-> Keycloak
 ```
 
 Every pod joins the same tailnet through Headscale. The MagicDNS
