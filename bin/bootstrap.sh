@@ -139,7 +139,6 @@ cat <<EOF
   │    python3 tests/test_intranet_files.py alice polaris         │
   │    python3 tests/test_customer_data.py  alice-acme polaris    │
   │    python3 tests/test_grafana_role.py   carol polaris          │
-  │    python3 tests/capture_screenshots.py                        │
   │                                                               │
   │  See RUN_REPORT.md for the POC narrative and findings.        │
   └───────────────────────────────────────────────────────────────┘

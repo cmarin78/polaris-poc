@@ -89,8 +89,7 @@ flat by design — there is no project timeline framing here. See
 10. **Capture the six screenshots** that document the working POC
     (intranet directory, Grafana home as Admin, customer home/data/
     files for tenant acme, customer 403 for an employee without a
-    tenant). The capture script is
-    `tests/capture_screenshots.py`.
+    tenant). The captured PNGs live in `docs/screenshots/`.
 
 ## 4. Setup details (per task)
 
@@ -153,11 +152,11 @@ Negative cases:
 
 ## 5. End-to-end test (with figures)
 
-The validation runs through `tests/capture_screenshots.py` (Playwright
-headless + chromium with `--host-rules=MAP keycloak 192.168.32.4` so
-the browser can reach the Keycloak container over the docker bridge
-from the test host). The cookie jar is cleared between portal
-captures so the realm-level Keycloak SSO session from one user's
+The validation drives a headless Chromium through the OIDC flow for
+each (portal, user) pair (Playwright + `--host-rules=MAP keycloak
+192.168.32.4` so the browser can reach the Keycloak container over the
+docker bridge from the test host). The cookie jar is cleared between
+portal captures so the realm-level Keycloak SSO session from one user's
 intranet login does not auto-bridge them into another pod when we
 later log in as a different user.
 
