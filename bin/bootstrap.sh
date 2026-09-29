@@ -58,7 +58,7 @@ docker compose -f docker-compose.yml run --rm minio-bootstrap | tail -5
 # ----- 4. kind cluster + docker network bridge --------------------------
 log "4/8 kind cluster polaris-eks-sim"
 if ! kind get clusters 2>/dev/null | grep -q polaris-eks-sim; then
-  kind create cluster --name polaris-eks-sim --config k3d/cluster.yaml
+  kind create cluster --name polaris-eks-sim --config kind/cluster.yaml
 else
   log "   kind cluster already exists, skipping create"
 fi
@@ -93,7 +93,7 @@ done
 
 # ----- 6. apply k8s manifests --------------------------------------------
 log "6/8 apply traefik + 3 portals"
-kubectl --context=kind-polaris-eks-sim apply -f k3d/traefik.yaml
+kubectl --context=kind-polaris-eks-sim apply -f kind/traefik.yaml
 for app in intranet grafana customer; do
   kubectl --context=kind-polaris-eks-sim apply -f "charts/$app/deployment.yaml"
 done

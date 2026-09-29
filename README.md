@@ -66,7 +66,7 @@ docker compose -f docker-compose.yml up -d
 docker compose -f docker-compose.yml run --rm minio-bootstrap
 
 # 2. Start kind cluster and connect to the docker-compose network
-kind create cluster --name polaris-eks-sim --config k3d/cluster.yaml
+kind create cluster --name polaris-eks-sim --config kind/cluster.yaml
 docker network connect polaris_polaris_default polaris-eks-sim-control-plane
 docker network connect polaris_polaris_default polaris-eks-sim-worker
 
@@ -79,7 +79,7 @@ kind load docker-image polaris-grafana:latest  --name polaris-eks-sim
 kind load docker-image polaris-customer:latest --name polaris-eks-sim
 
 # 4. Apply manifests
-kubectl --context=kind-polaris-eks-sim apply -f k3d/traefik.yaml
+kubectl --context=kind-polaris-eks-sim apply -f kind/traefik.yaml
 kubectl --context=kind-polaris-eks-sim apply -f charts/intranet/deployment.yaml
 kubectl --context=kind-polaris-eks-sim apply -f charts/grafana/deployment.yaml
 kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml
@@ -154,7 +154,7 @@ polaris/
 │   ├── REPRODUCIBILITY.md      ← step-by-step commands + outputs + explanations
 │   ├── diagrams/{architecture,iam-flow,idp-flow,tag-matrix}.mmd
 │   └── screenshots/             ← 6 PNGs: intranet, Grafana, customer (×4)
-├── k3d/
+├── kind/
 │   ├── cluster.yaml            ← kind cluster config
 │   ├── traefik.yaml            ← Traefik ingress
 │   └── test-pod.yaml           ← connectivity test

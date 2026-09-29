@@ -114,9 +114,9 @@ endpoint is not supported by MinIO.
 `kind` cluster with 5 namespaces (`pol-intranet`, `pol-grafana`,
 `pol-customer`, `pol-storage`, `pol-system`). Traefik ingress
 controller runs as a DaemonSet with a NodePort Service for host
-access. Pivoted from `k3d` because `ghcr.io/k3d-io/k3d-tools` is
-blocked on this host, and from `kind extraPortMappings` to Traefik
-NodePort because kind refused to start with the host-port mappings.
+access. The cluster is configured without `extraPortMappings` because
+kind refused to start on this host with the host-port mappings; ingress
+is reached through the Traefik NodePort or `kubectl port-forward`.
 
 The portal pods each have a tailscale sidecar in the POC design but
 in this run the portals reach MinIO and Postgres via the docker

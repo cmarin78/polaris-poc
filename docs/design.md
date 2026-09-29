@@ -188,8 +188,8 @@ Cluster: `polaris-eks-sim`. 1 control-plane + 1 agent (sufficient for
 the POC). Traefik ingress controller. Five namespaces + per-namespace
 RBAC.
 
-The original design used k3d, pivoted to kind because `ghcr.io` is
-blocked on this host.
+Image: `kindest/node:v1.30.0` (cached locally; the k3s-tools image that an
+alternative tool would need is blocked on this host).
 
 ### 3.4 Data — Postgres
 
@@ -409,7 +409,7 @@ polaris/
 │       ├── idp-flow.mmd
 │       ├── tag-matrix.mmd
 │       └── iam-flow.mmd
-├── k3d/
+├── kind/
 │   ├── cluster.yaml                 kind cluster config
 │   ├── traefik.yaml                 Traefik ingress
 │   └── test-pod.yaml                connectivity test

@@ -8,7 +8,7 @@ flowchart TB
 
         Proxy["Reverse proxy<br/>traefik :8080"]
 
-        subgraph K3D["k3d cluster polaris-eks-sim"]
+        subgraph KIND["kind cluster polaris-eks-sim"]
             direction TB
 
             subgraph NS1["ns: pol-intranet"]

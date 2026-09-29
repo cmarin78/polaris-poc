@@ -1,0 +1,16 @@
+# polaris POC — kind cluster config
+#
+# 1 control-plane + 1 worker. Image kindest/node:v1.30.0 (cached locally).
+# No host port mappings — the docker host-port allocator on this box reports
+# "already allocated" for every port we tried, even when `ss -tln` showed
+# nothing. Ingress access goes through Traefik NodePort 30080 / 30443
+# (see kind/traefik.yaml) or `kubectl port-forward` from the host.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: polaris-eks-sim
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.30.0
+  - role: worker
+    image: kindest/node:v1.30.0

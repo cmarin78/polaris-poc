@@ -1,11 +1,11 @@
 # polaris POC — test pod manifest for verifying kind -> polaris stack connectivity.
 #
-# Run with: kubectl apply -f k3d/test-pod.yaml --context=kind-polaris-eks-sim
+# Run with: kubectl apply -f kind/test-pod.yaml --context=kind-polaris-eks-sim
 # Get logs:  kubectl logs test-connect --context=kind-polaris-eks-sim
 #
 # DNS resolution works because the kind control-plane + worker
 # containers are connected to the polaris_polaris_default docker
-# network (see notes/k3d.md).
+# network (see notes/kind-networking.md).
 ---
 apiVersion: v1
 kind: Pod

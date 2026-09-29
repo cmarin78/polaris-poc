@@ -123,7 +123,7 @@ inside the cluster reach the base stack by hostname (`keycloak`,
 network so the docker-compose DNS resolver sees them.
 
 ```bash
-kind create cluster --name polaris-eks-sim --config k3d/cluster.yaml
+kind create cluster --name polaris-eks-sim --config kind/cluster.yaml
 docker network connect polaris_polaris_default polaris-eks-sim-control-plane
 docker network connect polaris_polaris_default polaris-eks-sim-worker
 ```
@@ -209,7 +209,7 @@ Traefik ingress first (so the ingress controller is ready before any
 pod starts exposing services), then the three portal deployments.
 
 ```bash
-kubectl --context=kind-polaris-eks-sim apply -f k3d/traefik.yaml
+kubectl --context=kind-polaris-eks-sim apply -f kind/traefik.yaml
 kubectl --context=kind-polaris-eks-sim apply -f charts/intranet/deployment.yaml
 kubectl --context=kind-polaris-eks-sim apply -f charts/grafana/deployment.yaml
 kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml
@@ -335,62 +335,7 @@ rows returned, STS temporary access key prefix, Grafana role mapping,
 etc. The cross-checks together prove that OIDC, RLS, and STS all
 work end-to-end for the given user.
 
-## Task 10 — Capture the six POC screenshots
-
-Drives a headless Chromium through the OIDC flow for all six
-portal/user combinations and saves PNGs under `docs/screenshots/`.
-
-```bash
-python3 tests/capture_screenshots.py
-```
-
-```text
-[01] intranet /directory as alice (employee)
-  landed: http://127.0.0.1:13000/directory
-  saved 01-intranet-directory-alice.png (58,500 B)
-
-[02] grafana home as carol (pol-admin → Admin)
-  landed: http://127.0.0.1:13001/?from=now-6h&to=now&timezone=browser
-  saved 02-grafana-home-carol-admin.png (14,467 B)
-
-[03-05] customer alice-acme (home + data + files)
-  [03] landed: http://127.0.0.1:13002/
-  saved 03-customer-home-alice-acme.png (62,224 B)
-  [04] landed: http://127.0.0.1:13002/data
-  saved 04-customer-data-alice-acme-acme-only.png (49,081 B)
-  [05] landed: http://127.0.0.1:13002/files
-  saved 05-customer-files-alice-acme.png (32,478 B)
-
-[06] customer /data as alice (no tenant → 403)
-  landed: http://127.0.0.1:13002/data
-  saved 06-customer-data-alice-403-no-tenant.png (10,289 B)
-```
-
-The script also requires three `kubectl port-forward`s to be running
-on `127.0.0.1:13000`, `127.0.0.1:13001`, `127.0.0.1:13002` before it
-runs. The simplest way to set those up is:
-
-```bash
-nohup kubectl --context=kind-polaris-eks-sim port-forward -n pol-intranet svc/intranet 13000:80 > /tmp/pf-intranet.log 2>&1 &
-nohup kubectl --context=kind-polaris-eks-sim port-forward -n pol-grafana  svc/grafana  13001:80 > /tmp/pf-grafana.log  2>&1 &
-nohup kubectl --context=kind-polaris-eks-sim port-forward -n pol-customer svc/customer 13002:80 > /tmp/pf-customer.log 2>&1 &
-sleep 3
-curl -s -o /dev/null -w "intranet: %{http_code}\n" http://127.0.0.1:13000/healthz
-curl -s -o /dev/null -w "grafana:  %{http_code}\n" http://127.0.0.1:13001/api/health
-curl -s -o /dev/null -w "customer: %{http_code}\n" http://127.0.0.1:13002/healthz
-```
-
-```text
-intranet: 200
-grafana:  200
-customer: 200
-```
-
-The three `200`s confirm the port-forwards are healthy. If any of
-them returns `000`, the port-forward failed — usually because the
-pod is still starting up; rerun the wait command in Task 7.
-
-## Task 11 — Tear down
+## Task 10 — Tear down
 
 Stops the portals and the kind cluster, then stops the docker-compose
 services. The Postgres volume and MinIO data volume are preserved

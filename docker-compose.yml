@@ -1,4 +1,4 @@
-# polaris POC — Day 1 base stack
+# polaris POC — base stack (foundation for the portals)
 #
 # Components:
 #   - keycloak    (OIDC IDP, port 8081)
@@ -6,7 +6,8 @@
 #   - minio       (S3-compatible storage with IAM, ports 9000/9001)
 #   - headscale   (Tailscale control plane, port 28080)
 #
-# Day 2-5 will add k3d cluster with the 3 portals on top of this base.
+# The kind cluster (see kind/cluster.yaml) joins this network so pods
+# inside the cluster can reach the services above by their compose hostnames.
 
 version: "3.8"
 

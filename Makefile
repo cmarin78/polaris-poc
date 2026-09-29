@@ -22,7 +22,7 @@ minio-bootstrap:     ## Apply MinIO buckets + IAM policies
 	docker compose -f docker-compose.yml run --rm minio-bootstrap
 
 kind-create:         ## Create kind cluster + connect to docker network
-	kind create cluster --name polaris-eks-sim --config k3d/cluster.yaml
+	kind create cluster --name polaris-eks-sim --config kind/cluster.yaml
 	docker network connect polaris_polaris_default polaris-eks-sim-control-plane
 	docker network connect polaris_polaris_default polaris-eks-sim-worker
 
@@ -40,7 +40,7 @@ load:               ## Load all 3 portal images into kind
 	kind load docker-image polaris-customer:latest --name polaris-eks-sim
 
 deploy:              ## Apply Traefik + 3 portal manifests to kind
-	kubectl --context=kind-polaris-eks-sim apply -f k3d/traefik.yaml
+	kubectl --context=kind-polaris-eks-sim apply -f kind/traefik.yaml
 	kubectl --context=kind-polaris-eks-sim apply -f charts/intranet/deployment.yaml
 	kubectl --context=kind-polaris-eks-sim apply -f charts/grafana/deployment.yaml
 	kubectl --context=kind-polaris-eks-sim apply -f charts/customer/deployment.yaml

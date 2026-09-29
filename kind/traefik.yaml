@@ -1,6 +1,6 @@
 # polaris POC — Traefik ingress controller manifest
 #
-# Installed with: kubectl apply -f k3d/traefik.yaml
+# Installed with: kubectl apply -f kind/traefik.yaml
 # Exposes a single NodePort (30080 HTTP / 30443 HTTPS) on every node.
 # For the POC we use `kubectl port-forward svc/traefik 8080:80 -n pol-system`
 # to access ingress from the host (avoids the docker host-port allocator
