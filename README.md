@@ -182,5 +182,5 @@ switching to raw HTTP for the STS call.
 
 ## License
 
-This POC is for demonstration. No license attached — adapt freely for your
-own internal POC.
+[MIT](LICENSE). Use, modify, and redistribute freely. See `LICENSE` at the
+root of this repository for the full text.
