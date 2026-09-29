@@ -95,7 +95,7 @@
     }
   ],
   "ssh": [
-    // Ops puede SSH bastion para debug k3d nodes (futuro)
+    // Ops and admin can SSH bastion to debug cluster nodes (future)
     {
       "action": "accept",
       "src":    ["tag:pol-ops", "tag:pol-admin"],
